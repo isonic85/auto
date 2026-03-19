@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DeepDart Pro - Runda Cirklar</title>
+    <title>DeepDart Pro - Precision Edition</title>
     <style>
         body { background: #121212; color: white; font-family: sans-serif; text-align: center; margin: 0; overflow: hidden; }
         .container { position: relative; width: 100vw; height: 70vh; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden; }
@@ -26,10 +26,10 @@
     <div id="ui">
         <div class="zoom-wrap">
             <span>ZOOM:</span>
-            <input type="range" id="zoom-slider" min="1" max="5" step="0.1" value="1">
+            <input type="range" id="zoom-slider" min="1" max="5" step="0.1" value="1.5">
         </div>
         <button class="btn" onclick="captureReference()">KALIBRERA (TÖM TAVLAN)</button>
-        <h2 id="last-hit" style="color: #2ecc71; margin: 10px 0;">VÄNTAR PÅ KAST...</h2>
+        <h2 id="last-hit" style="color: #2ecc71; margin: 10px 0; font-size: 1.8rem;">VÄNTAR...</h2>
     </div>
 
 <script>
@@ -41,7 +41,7 @@ const zoomSlider = document.getElementById('zoom-slider');
 
 let refFrame = null;
 let isCalibrated = false;
-let board = { x: 0, y: 0, r: 0 }; // Beräknas dynamiskt
+let board = { x: 0, y: 0, r: 0 }; 
 
 navigator.mediaDevices.getUserMedia({ 
     video: { 
@@ -52,11 +52,9 @@ navigator.mediaDevices.getUserMedia({
 }).then(s => { 
     video.srcObject = s;
     video.onloadedmetadata = () => {
-        // Anpassa canvas till kamerans faktiska proportioner
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         
-        // Sätt brädans center och radie baserat på den riktiga bilden
         board.x = canvas.width / 2;
         board.y = canvas.height / 2;
         board.r = Math.min(canvas.width, canvas.height) * 0.4;
@@ -70,6 +68,7 @@ function captureReference() {
     const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
     refFrame = new Uint8ClampedArray(frame.data);
     isCalibrated = true;
+    hitEl.innerText = "REDO!";
 }
 
 function process() {
@@ -77,25 +76,25 @@ function process() {
     const vw = video.videoWidth;
     const vh = video.videoHeight;
 
-    // Beräkna utsnitt (Crop) som bevarar aspektförhållandet
     const sw = vw / zoom;
     const sh = vh / zoom;
     const sx = (vw - sw) / 2;
     const sy = (vh - sh) / 2;
 
-    // Rita inzoomat utan att stretcha bilden
+    // Rita inzoomat
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
     
     if (isCalibrated) {
         const currentFrame = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
         let movements = [];
         const sensitivity = 45;
-        const step = 4; // Hoppa över pixlar för prestanda
+        const step = 4;
 
         for (let y = Math.floor(board.y - board.r); y < board.y + board.r; y += step) {
             for (let x = Math.floor(board.x - board.r); x < board.x + board.r; x += step) {
                 const dx = x - board.x;
                 const dy = y - board.y;
+                
                 if (dx*dx + dy*dy < board.r*board.r) {
                     const idx = (y * canvas.width + x) * 4;
                     const diff = Math.abs(currentFrame[idx] - refFrame[idx]);
@@ -106,29 +105,8 @@ function process() {
             }
         }
 
-if (movements.length > 15 && movements.length < 2000) {
-            // Istället för medelvärde, hitta den punkt som är närmast mitten (spetsen)
-            let closestDist = Infinity;
-            let tipX = 0;
-            let tipY = 0;
-
-            for (let m of movements) {
-                const dx = m.x - board.x;
-                const dy = m.y - board.y;
-                const d = dx*dx + dy*dy; // Pythagoras (utan sqrt för snabbhet)
-                
-                if (d < closestDist) {
-                    closestDist = d;
-                    tipX = m.x;
-                    tipY = m.y;
-                }
-            }
-            
-            // Vi använder nu tipX och tipY istället för genomsnittet
-            triggerHit(tipX, tipY);
-            refFrame = new Uint8ClampedArray(currentFrame);
+        // --- SPETSDETEKTION ---
         if (movements.length > 15 && movements.length < 2000) {
-            // Istället för medelvärde, hitta den punkt som är närmast mitten (spetsen)
             let closestDist = Infinity;
             let tipX = 0;
             let tipY = 0;
@@ -136,7 +114,7 @@ if (movements.length > 15 && movements.length < 2000) {
             for (let m of movements) {
                 const dx = m.x - board.x;
                 const dy = m.y - board.y;
-                const d = dx*dx + dy*dy; // Pythagoras (utan sqrt för snabbhet)
+                const d = dx*dx + dy*dy; 
                 
                 if (d < closestDist) {
                     closestDist = d;
@@ -145,15 +123,14 @@ if (movements.length > 15 && movements.length < 2000) {
                 }
             }
             
-            // Vi använder nu tipX och tipY istället för genomsnittet
             triggerHit(tipX, tipY);
+            // Uppdatera referens direkt för att frysa pilen i minnet
             refFrame = new Uint8ClampedArray(currentFrame);
         }
     }
     
     drawOverlay();
     requestAnimationFrame(process);
-}
 }
 
 function calculateScore(x, y) {
@@ -178,25 +155,26 @@ function calculateScore(x, y) {
 }
 
 function triggerHit(x, y) {
-    hitEl.innerText = "TRÄFF: " + calculateScore(x, y);
+    const score = calculateScore(x, y);
+    hitEl.innerText = "TRÄFF: " + score;
 }
 
 function drawOverlay() {
     ctx.lineWidth = 4;
+    // Tavla
     ctx.strokeStyle = "rgba(0, 255, 0, 0.4)";
     ctx.beginPath();
     ctx.arc(board.x, board.y, board.r, 0, Math.PI * 2);
     ctx.arc(board.x, board.y, board.r * 0.92, 0, Math.PI * 2);
     ctx.stroke();
     
-    // Trippelring
+    // Trippel
     ctx.strokeStyle = "rgba(255, 0, 0, 0.3)";
     ctx.beginPath();
     ctx.arc(board.x, board.y, board.r * 0.62, 0, Math.PI * 2);
     ctx.arc(board.x, board.y, board.r * 0.55, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Mitten-prick
     ctx.fillStyle = "red";
     ctx.beginPath();
     ctx.arc(board.x, board.y, 5, 0, Math.PI*2);
