@@ -202,21 +202,16 @@ function resetPoints() {
 
     points[0].x = w / 2;
     points[0].y = h / 2 - size;
-
     points[1].x = w / 2 + size;
     points[1].y = h / 2;
-
     points[2].x = w / 2;
     points[2].y = h / 2 + size;
-
     points[3].x = w / 2 - size;
     points[3].y = h / 2;
 
     isCalibrated = false;
     refFrame = null;
     lastTip = null;
-    waitingForBoardToSettle = false;
-    stableFramesAfterHit = 0;
     hitEl.innerText = "VÄNTAR...";
 }
 
@@ -231,10 +226,10 @@ function getPointerPos(e) {
     };
 }
 
-function pickDraggedPoint(pos) {
+canvas.addEventListener('touchstart', (e) => {
+    const pos = getPointerPos(e);
     let best = null;
     let bestDist = Infinity;
-
     for (const p of points) {
         const d = Math.hypot(p.x - pos.x, p.y - pos.y);
         if (d < 90 && d < bestDist) {
@@ -242,12 +237,7 @@ function pickDraggedPoint(pos) {
             bestDist = d;
         }
     }
-    return best;
-}
-
-canvas.addEventListener('touchstart', (e) => {
-    const pos = getPointerPos(e);
-    draggedPoint = pickDraggedPoint(pos);
+    draggedPoint = best;
     if (draggedPoint) {
         lastTouchPos = pos;
         e.preventDefault();
@@ -256,256 +246,125 @@ canvas.addEventListener('touchstart', (e) => {
 
 window.addEventListener('touchmove', (e) => {
     if (!draggedPoint) return;
-
     const pos = getPointerPos(e);
-    draggedPoint.x = pos.x;
-    draggedPoint.y = pos.y - (canvas.height * 0.10);
-
-    lastTouchPos = pos;
-    isCalibrated = false;
-    refFrame = null;
-    hitEl.innerText = "KALIBRERA";
-    e.preventDefault();
-}, { passive: false });
-
-window.addEventListener('touchend', () => {
-    draggedPoint = null;
-    lastTouchPos = null;
-});
-
-canvas.addEventListener('mousedown', (e) => {
-    const pos = getPointerPos(e);
-    draggedPoint = pickDraggedPoint(pos);
-    lastTouchPos = pos;
-});
-
-window.addEventListener('mousemove', (e) => {
-    if (!draggedPoint) return;
-    const pos = getPointerPos(e);
+    // Fix: Ingen offset längre eftersom vi har förstoringsglas
     draggedPoint.x = pos.x;
     draggedPoint.y = pos.y;
     lastTouchPos = pos;
     isCalibrated = false;
     refFrame = null;
-    hitEl.innerText = "KALIBRERA";
-});
+    e.preventDefault();
+}, { passive: false });
 
-window.addEventListener('mouseup', () => {
-    draggedPoint = null;
-    lastTouchPos = null;
-});
+window.addEventListener('touchend', () => { draggedPoint = null; lastTouchPos = null; });
 
 zoomSlider.oninput = async () => {
     const val = parseFloat(zoomSlider.value);
     zoomLabel.innerText = `ZOOM: ${val.toFixed(1)}x`;
-
-    try {
-        if (supportsHardwareZoom && videoTrack) {
-            await videoTrack.applyConstraints({ advanced: [{ zoom: val }] });
-        }
-    } catch (err) {
-        console.warn("Zoom kunde inte appliceras:", err);
+    if (supportsHardwareZoom && videoTrack) {
+        await videoTrack.applyConstraints({ advanced: [{ zoom: val }] });
     }
-
     isCalibrated = false;
     refFrame = null;
-    lastTip = null;
-    hitEl.innerText = "KALIBRERA";
 };
+
+function captureReference() {
+    if (!canvas.width) return;
+    drawVideoFrame(offscreenCtx, offscreenCanvas);
+    refFrame = new Uint8ClampedArray(offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height).data);
+    isCalibrated = true;
+    lastTip = null;
+    hitEl.innerText = "REDO!";
+}
 
 function drawVideoFrame(targetCtx, targetCanvas) {
     if (supportsHardwareZoom) {
         targetCtx.drawImage(video, 0, 0, targetCanvas.width, targetCanvas.height);
     } else {
         const z = parseFloat(zoomSlider.value);
-        const vw = video.videoWidth;
-        const vh = video.videoHeight;
-
-        const sw = vw / z;
-        const sh = vh / z;
-        const sx = (vw - sw) / 2;
-        const sy = (vh - sh) / 2;
-
-        targetCtx.drawImage(video, sx, sy, sw, sh, 0, 0, targetCanvas.width, targetCanvas.height);
+        const sw = video.videoWidth / z;
+        const sh = video.videoHeight / z;
+        targetCtx.drawImage(video, (video.videoWidth - sw) / 2, (video.videoHeight - sh) / 2, sw, sh, 0, 0, targetCanvas.width, targetCanvas.height);
     }
 }
 
-function captureReference() {
-    if (!canvas.width || !canvas.height) return;
-
+function process() {
+    if (!video.videoWidth) { requestAnimationFrame(process); return; }
     drawVideoFrame(offscreenCtx, offscreenCanvas);
-    refFrame = new Uint8ClampedArray(
-        offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height).data
-    );
-
-    isCalibrated = true;
-    lastTip = null;
-    waitingForBoardToSettle = false;
-    stableFramesAfterHit = 0;
-    hitEl.innerText = "REDO!";
-}
-
-function process(timestamp) {
-    if (!video.videoWidth || !video.videoHeight) {
-        requestAnimationFrame(process);
-        return;
-    }
-
-    drawVideoFrame(offscreenCtx, offscreenCanvas);
-    const currentImage = offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
-    const currentFrame = currentImage.data;
-
+    const currentFrame = offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height).data;
     ctx.drawImage(offscreenCanvas, 0, 0, canvas.width, canvas.height);
 
     if (isCalibrated && refFrame) {
         const now = performance.now();
-        const canDetect = (now - lastDetectionTime) > detectionCooldownMs;
+        if ((now - lastDetectionTime) > detectionCooldownMs && !waitingForBoardToSettle) {
+            const moves = [];
+            for (let y = 80; y < canvas.height - 80; y += 4) { // Tätare sökning (4 istället för 6)
+                for (let x = 80; x < canvas.width - 80; x += 4) {
+                    const i = (y * canvas.width + x) * 4;
+                    const diff = Math.abs(refFrame[i] - currentFrame[i]) + Math.abs(refFrame[i+1] - currentFrame[i+1]) + Math.abs(refFrame[i+2] - currentFrame[i+2]);
+                    if (diff > 100) moves.push({ x, y });
+                }
+            }
 
-        const motion = detectMotion(refFrame, currentFrame, canvas.width, canvas.height);
-
-        if (!waitingForBoardToSettle && canDetect && motion.moves.length > 25 && motion.moves.length < 2200) {
-            const center = getBoardCenter();
-            const tip = estimateTip(motion.moves, center);
-
-            if (tip && isLikelyOnBoard(tip, center)) {
-                lastTip = tip;
-                hitEl.innerText = calculateScore(tip, center);
-                lastDetectionTime = now;
-                waitingForBoardToSettle = true;
-                stableFramesAfterHit = 0;
+            if (moves.length > 20 && moves.length < 1500) {
+                const center = getBoardCenter();
+                const tip = estimateTip(moves, center);
+                if (tip && isLikelyOnBoard(tip, center)) {
+                    lastTip = tip;
+                    hitEl.innerText = calculateScore(tip, center);
+                    lastDetectionTime = now;
+                    waitingForBoardToSettle = true;
+                }
             }
         } else if (waitingForBoardToSettle) {
-            if (motion.moves.length < 12) {
-                stableFramesAfterHit++;
-            } else {
-                stableFramesAfterHit = 0;
-            }
-
-            if (stableFramesAfterHit >= 8) {
+            stableFramesAfterHit++;
+            if (stableFramesAfterHit > 10) {
                 refFrame = new Uint8ClampedArray(currentFrame);
                 waitingForBoardToSettle = false;
                 stableFramesAfterHit = 0;
             }
         }
     }
-
     drawOverlay();
     requestAnimationFrame(process);
 }
 
-function detectMotion(reference, current, width, height) {
-    const moves = [];
-
-    const margin = 80;
-    const step = 6;
-
-    for (let y = margin; y < height - margin; y += step) {
-        for (let x = margin; x < width - margin; x += step) {
-            const i = (y * width + x) * 4;
-
-            const dr = Math.abs(reference[i] - current[i]);
-            const dg = Math.abs(reference[i + 1] - current[i + 1]);
-            const db = Math.abs(reference[i + 2] - current[i + 2]);
-
-            const diff = dr + dg + db;
-
-            // kräver både total skillnad och att bilden blivit mörkare lite grand
-            const darker =
-                (reference[i] + reference[i + 1] + reference[i + 2]) -
-                (current[i] + current[i + 1] + current[i + 2]);
-
-            if (diff > 90 && darker > 20) {
-                moves.push({ x, y });
-            }
-        }
-    }
-
-    return { moves };
-}
-
 function estimateTip(moves, center) {
-    if (!moves.length) return null;
-
-    let avgX = 0;
-    let avgY = 0;
-
-    for (const m of moves) {
-        avgX += m.x;
-        avgY += m.y;
-    }
-
-    avgX /= moves.length;
-    avgY /= moves.length;
-
-    const vx = center.x - avgX;
-    const vy = center.y - avgY;
+    let avgX = 0, avgY = 0;
+    moves.forEach(m => { avgX += m.x; avgY += m.y; });
+    avgX /= moves.length; avgY /= moves.length;
+    const vx = center.x - avgX, vy = center.y - avgY;
     const mag = Math.hypot(vx, vy);
-
-    if (mag < 1) return null;
-
-    let bestTip = null;
-    let bestProj = -Infinity;
-
-    for (const m of moves) {
+    let bestTip = null, bestProj = -Infinity;
+    moves.forEach(m => {
         const proj = ((m.x - avgX) * vx / mag) + ((m.y - avgY) * vy / mag);
-        if (proj > bestProj) {
-            bestProj = proj;
-            bestTip = m;
-        }
-    }
-
+        if (proj > bestProj) { bestProj = proj; bestTip = m; }
+    });
     return bestTip;
 }
 
-function getBoardCenter() {
-    return getLineIntersection(points[0], points[2], points[1], points[3]);
+function getBoardCenter() { return getLineIntersection(points[0], points[2], points[1], points[3]); }
+function getBoardRadius(center) { 
+    return (Math.hypot(points[0].x - center.x, points[0].y - center.y) + 
+            Math.hypot(points[1].x - center.x, points[1].y - center.y)) / 2; 
 }
-
-function getBoardRadius(center) {
-    const rTop = Math.hypot(points[0].x - center.x, points[0].y - center.y);
-    const rRight = Math.hypot(points[1].x - center.x, points[1].y - center.y);
-    const rBottom = Math.hypot(points[2].x - center.x, points[2].y - center.y);
-    const rLeft = Math.hypot(points[3].x - center.x, points[3].y - center.y);
-
-    return (rTop + rRight + rBottom + rLeft) / 4;
-}
-
-function isLikelyOnBoard(tip, center) {
-    const r = getBoardRadius(center);
-    const d = Math.hypot(tip.x - center.x, tip.y - center.y);
-    return d <= r * 1.15;
-}
+function isLikelyOnBoard(tip, center) { return Math.hypot(tip.x - center.x, tip.y - center.y) <= getBoardRadius(center) * 1.1; }
 
 function getLineIntersection(p1, p2, p3, p4) {
-    const d =
-        (p4.y - p3.y) * (p2.x - p1.x) -
-        (p4.x - p3.x) * (p2.y - p1.y);
-
-    if (Math.abs(d) < 0.0001) {
-        return { x: canvas.width / 2, y: canvas.height / 2 };
-    }
-
-    const ua =
-        ((p4.x - p3.x) * (p1.y - p3.y) -
-         (p4.y - p3.y) * (p1.x - p3.x)) / d;
-
-    return {
-        x: p1.x + ua * (p2.x - p1.x),
-        y: p1.y + ua * (p2.y - p1.y)
-    };
+    const d = (p4.y - p3.y) * (p2.x - p1.x) - (p4.x - p3.x) * (p2.y - p1.y);
+    const ua = ((p4.x - p3.x) * (p1.y - p3.y) - (p4.y - p3.y) * (p1.x - p3.x)) / d;
+    return { x: p1.x + ua * (p2.x - p1.x), y: p1.y + ua * (p2.y - p1.y) };
 }
 
 function calculateScore(tip, center) {
-    const dx = tip.x - center.x;
-    const dy = tip.y - center.y;
-
-    // 0° = rakt upp, ökar medurs, centrum av första sektor = 20
-    let ang = (Math.atan2(dy, dx) * 180 / Math.PI + 99) % 360;
-    if (ang < 0) ang += 360;
+    const dx = tip.x - center.x, dy = tip.y - center.y;
+    // MATEMATISK FIX: +90 flyttar 0 till toppen, +9 centrerar 20-segmentet
+    let ang = (Math.atan2(dy, dx) * 180 / Math.PI) + 90 + 9;
+    while (ang < 0) ang += 360;
+    ang %= 360;
 
     const r = getBoardRadius(center);
-    const dist = Math.hypot(dx, dy);
-    const pct = dist / r;
+    const pct = Math.hypot(dx, dy) / r;
 
     if (pct > 1.05) return "MISS";
     if (pct < 0.04) return "BULL (50)";
@@ -514,9 +373,8 @@ function calculateScore(tip, center) {
     const segs = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
     const base = segs[Math.floor(ang / 18)];
 
-    if (pct > 0.93) return "D" + base;
-    if (pct > 0.56 && pct < 0.64) return "T" + base;
-
+    if (pct > 0.92) return "D" + base;
+    if (pct > 0.55 && pct < 0.64) return "T" + base;
     return String(base);
 }
 
@@ -524,119 +382,34 @@ function drawOverlay() {
     const center = getBoardCenter();
     const radius = getBoardRadius(center);
 
-    // hjälplinjer
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = "rgba(255,255,255,0.28)";
-    ctx.setLineDash([10, 10]);
-
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    ctx.lineTo(points[2].x, points[2].y);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.moveTo(points[1].x, points[1].y);
-    ctx.lineTo(points[3].x, points[3].y);
-    ctx.stroke();
-
+    ctx.strokeStyle = "rgba(255,255,255,0.2)";
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath(); ctx.moveTo(points[0].x, points[0].y); ctx.lineTo(points[2].x, points[2].y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(points[1].x, points[1].y); ctx.lineTo(points[3].x, points[3].y); ctx.stroke();
     ctx.setLineDash([]);
 
-    // centrum
-    ctx.fillStyle = "rgba(255,255,255,0.8)";
-    ctx.beginPath();
-    ctx.arc(center.x, center.y, 5, 0, Math.PI * 2);
-    ctx.fill();
+    points.forEach(p => {
+        ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, 28, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = "white"; ctx.lineWidth = 3; ctx.stroke();
+        ctx.fillStyle = "white"; ctx.font = "bold 24px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(p.label, p.x, p.y);
+    });
 
-    // ytterring
-    ctx.strokeStyle = "rgba(255,255,255,0.15)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
-    ctx.stroke();
-
-    // kalibreringspunkter
-    for (const p of points) {
-        ctx.fillStyle = p.color;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, 28, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.strokeStyle = "white";
-        ctx.lineWidth = 3;
-        ctx.stroke();
-
-        ctx.fillStyle = "white";
-        ctx.font = "bold 32px sans-serif";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(p.label, p.x, p.y + 1);
-    }
-
-    // magnifier
     if (draggedPoint && lastTouchPos) {
-        const magSize = 220;
-        const magX = 20;
-        const magY = 20;
-        const srcSize = 120;
-
+        const magSize = 200, magX = 10, magY = 10, srcSize = 100;
         ctx.save();
-        ctx.beginPath();
-        ctx.arc(magX + magSize / 2, magY + magSize / 2, magSize / 2, 0, Math.PI * 2);
-        ctx.clip();
-
-        let sx = draggedPoint.x - srcSize / 2;
-        let sy = draggedPoint.y - srcSize / 2;
-
-        sx = Math.max(0, Math.min(canvas.width - srcSize, sx));
-        sy = Math.max(0, Math.min(canvas.height - srcSize, sy));
-
-        ctx.drawImage(
-            offscreenCanvas,
-            sx, sy, srcSize, srcSize,
-            magX, magY, magSize, magSize
-        );
-
-        // overlay-punkter även i förstoringsglas
-        const scale = magSize / srcSize;
-        const localX = magX + (draggedPoint.x - sx) * scale;
-        const localY = magY + (draggedPoint.y - sy) * scale;
-
-        ctx.strokeStyle = "white";
-        ctx.lineWidth = 2;
-
-        ctx.beginPath();
-        ctx.moveTo(magX + magSize / 2, magY);
-        ctx.lineTo(magX + magSize / 2, magY + magSize);
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.moveTo(magX, magY + magSize / 2);
-        ctx.lineTo(magX + magSize, magY + magSize / 2);
-        ctx.stroke();
-
-        ctx.strokeStyle = draggedPoint.color;
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(localX, localY, 16, 0, Math.PI * 2);
-        ctx.stroke();
-
+        ctx.beginPath(); ctx.rect(magX, magY, magSize, magSize); ctx.clip();
+        ctx.drawImage(offscreenCanvas, draggedPoint.x - srcSize/2, draggedPoint.y - srcSize/2, srcSize, srcSize, magX, magY, magSize, magSize);
+        ctx.strokeStyle = draggedPoint.color; ctx.lineWidth = 4; ctx.strokeRect(magX, magY, magSize, magSize);
+        ctx.beginPath(); ctx.strokeStyle = "white"; ctx.lineWidth = 1;
+        ctx.moveTo(magX + magSize/2, magY); ctx.lineTo(magX + magSize/2, magY + magSize);
+        ctx.moveTo(magX, magY + magSize/2); ctx.lineTo(magX + magSize, magY + magSize/2); ctx.stroke();
         ctx.restore();
-
-        ctx.strokeStyle = draggedPoint.color;
-        ctx.lineWidth = 5;
-        ctx.strokeRect(magX, magY, magSize, magSize);
     }
 
-    // senaste träff
     if (lastTip) {
-        ctx.fillStyle = "#00d2ff";
-        ctx.beginPath();
-        ctx.arc(lastTip.x, lastTip.y, 13, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.strokeStyle = "white";
-        ctx.lineWidth = 2;
-        ctx.stroke();
+        ctx.fillStyle = "#00d2ff"; ctx.beginPath(); ctx.arc(lastTip.x, lastTip.y, 10, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = "white"; ctx.stroke();
     }
 }
 </script>
