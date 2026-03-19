@@ -16,20 +16,31 @@
       --orange: #ff9500;
       --gray: #48484a;
       --blue: #0a84ff;
+      --yellow: #ffd60a;
+      --red: #ff453a;
     }
 
     * {
       box-sizing: border-box;
       -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      -webkit-user-select: none;
     }
 
-    body {
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
       background: var(--bg);
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-      margin: 0;
-      overflow: hidden;
       touch-action: none;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
     }
 
     .container {
@@ -41,13 +52,14 @@
       align-items: center;
       justify-content: center;
       overflow: hidden;
+      touch-action: none;
     }
 
     canvas {
       width: 100%;
       height: 100%;
-      object-fit: contain;
       display: block;
+      object-fit: contain;
       touch-action: none;
     }
 
@@ -78,7 +90,7 @@
       border-radius: 12px;
     }
 
-    input[type=range] {
+    input[type="range"] {
       flex-grow: 1;
       height: 30px;
       accent-color: var(--blue);
@@ -129,8 +141,8 @@
     }
 
     .status-ok { color: var(--green); }
-    .status-warn { color: #ffd60a; }
-    .status-bad { color: #ff453a; }
+    .status-warn { color: var(--yellow); }
+    .status-bad { color: var(--red); }
   </style>
 </head>
 <body>
@@ -176,7 +188,7 @@
 
     let draggedPoint = null;
     let activePointerId = null;
-    let lastPointerPos = null;
+    let lastPointerPosCanvas = null;
     let lastTip = null;
 
     let lastDetectionTime = 0;
@@ -187,7 +199,8 @@
     const stableFramesNeeded = 6;
     const settleMotionThreshold = 120;
 
-    let prevMovementCount = 0;
+    const HANDLE_RADIUS_CANVAS = 34;
+    const HANDLE_HIT_RADIUS_SCREEN = 56;
 
     const points = [
       { x: 0, y: 0, color: '#ff3b30', label: '20' },
@@ -272,6 +285,7 @@
       points[3].y = h / 2;
 
       clearCalibration();
+      stopDragging();
       setStatus('VÄNTAR...', 'warn');
     }
 
@@ -281,10 +295,9 @@
       lastTip = null;
       waitingForBoardToSettle = false;
       stableFrameCount = 0;
-      prevMovementCount = 0;
     }
 
-    function getPointerPos(e) {
+    function getCanvasPosFromEvent(e) {
       const rect = canvas.getBoundingClientRect();
       return {
         x: (e.clientX - rect.left) * (canvas.width / rect.width),
@@ -292,13 +305,22 @@
       };
     }
 
-    function findNearestPoint(pos, maxDist = 90) {
+    function getPointScreenPos(point) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: rect.left + (point.x / canvas.width) * rect.width,
+        y: rect.top + (point.y / canvas.height) * rect.height
+      };
+    }
+
+    function findNearestPointFromEvent(e, maxScreenDist = HANDLE_HIT_RADIUS_SCREEN) {
       let best = null;
       let bestDist = Infinity;
 
       for (const p of points) {
-        const d = Math.hypot(p.x - pos.x, p.y - pos.y);
-        if (d < maxDist && d < bestDist) {
+        const sp = getPointScreenPos(p);
+        const d = Math.hypot(sp.x - e.clientX, sp.y - e.clientY);
+        if (d < maxScreenDist && d < bestDist) {
           best = p;
           bestDist = d;
         }
@@ -308,41 +330,53 @@
     }
 
     canvas.addEventListener('pointerdown', (e) => {
-      const pos = getPointerPos(e);
-      const p = findNearestPoint(pos);
+      const p = findNearestPointFromEvent(e);
 
       if (!p) return;
 
       draggedPoint = p;
       activePointerId = e.pointerId;
-      lastPointerPos = pos;
+      lastPointerPosCanvas = getCanvasPosFromEvent(e);
 
-      canvas.setPointerCapture?.(e.pointerId);
+      try {
+        canvas.setPointerCapture(e.pointerId);
+      } catch (err) {
+        // Ignorera om browsern inte gillar detta
+      }
+
       e.preventDefault();
-    });
+    }, { passive: false });
 
-    window.addEventListener('pointermove', (e) => {
-      if (!draggedPoint || e.pointerId !== activePointerId) return;
+    document.addEventListener('pointermove', (e) => {
+      if (!draggedPoint || activePointerId === null || e.pointerId !== activePointerId) return;
 
-      const pos = getPointerPos(e);
+      const pos = getCanvasPosFromEvent(e);
       draggedPoint.x = clamp(pos.x, 0, canvas.width);
       draggedPoint.y = clamp(pos.y, 0, canvas.height);
-      lastPointerPos = pos;
+      lastPointerPosCanvas = pos;
 
       clearCalibration();
       setStatus('FLYTTA KLART → KALIBRERA', 'warn');
       e.preventDefault();
     }, { passive: false });
 
-    function stopDragging(e) {
-      if (e && activePointerId !== null && e.pointerId !== activePointerId) return;
+    document.addEventListener('pointerup', (e) => {
+      if (activePointerId !== null && e.pointerId === activePointerId) {
+        stopDragging();
+      }
+    });
+
+    document.addEventListener('pointercancel', (e) => {
+      if (activePointerId !== null && e.pointerId === activePointerId) {
+        stopDragging();
+      }
+    });
+
+    function stopDragging() {
       draggedPoint = null;
       activePointerId = null;
-      lastPointerPos = null;
+      lastPointerPosCanvas = null;
     }
-
-    window.addEventListener('pointerup', stopDragging);
-    window.addEventListener('pointercancel', stopDragging);
 
     zoomSlider.addEventListener('input', async () => {
       const val = parseFloat(zoomSlider.value);
@@ -375,7 +409,6 @@
       isCalibrated = true;
       waitingForBoardToSettle = false;
       stableFrameCount = 0;
-      prevMovementCount = 0;
       lastTip = null;
 
       setStatus('REDO!', 'ok');
@@ -455,8 +488,6 @@
             stableFrameCount = 0;
           }
         }
-
-        prevMovementCount = analysis.moves.length;
       }
 
       drawOverlay(center, radius);
@@ -604,7 +635,6 @@
 
       ctx.strokeStyle = 'rgba(255,255,255,0.20)';
       ctx.lineWidth = 2;
-
       ctx.beginPath();
       ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
       ctx.stroke();
@@ -612,7 +642,7 @@
       for (const p of points) {
         ctx.fillStyle = p.color;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 28, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, HANDLE_RADIUS_CANVAS, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.strokeStyle = 'white';
@@ -626,11 +656,11 @@
         ctx.fillText(p.label, p.x, p.y);
       }
 
-      if (draggedPoint && lastPointerPos) {
-        const magSize = 200;
+      if (draggedPoint && lastPointerPosCanvas) {
+        const magSize = 220;
         const magX = 10;
         const magY = 10;
-        const srcSize = 100;
+        const srcSize = 110;
 
         let sx = draggedPoint.x - srcSize / 2;
         let sy = draggedPoint.y - srcSize / 2;
