@@ -3,38 +3,37 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DeepDart Web - Inzoomad</title>
+    <title>DeepDart Web Clone - Zoom Edition</title>
     <style>
         body { background: #121212; color: white; font-family: sans-serif; text-align: center; margin: 0; overflow: hidden; }
-        .container { position: relative; display: inline-block; margin-top: 10px; background: #000; line-height: 0; }
-        canvas { position: absolute; top: 0; left: 0; pointer-events: none; width: 100%; height: 100%; }
-        video { width: 100%; max-width: 640px; height: auto; display: block; }
+        .container { position: relative; display: inline-block; background: #000; line-height: 0; width: 100vw; max-width: 640px; }
+        /* Vi gömmer originalvideon och visar bara den bearbetade canvasen */
+        video { display: none; }
+        canvas { width: 100%; height: auto; touch-action: none; }
         
         #ui { background: #222; padding: 15px; border-top: 2px solid #444; position: fixed; bottom: 0; width: 100%; box-sizing: border-box; }
         .log { height: 80px; overflow-y: auto; background: #000; font-family: monospace; padding: 8px; margin: 10px 0; border: 1px solid #444; font-size: 0.8rem; text-align: left; }
-        .btn { padding: 12px 20px; font-size: 1rem; cursor: pointer; background: #27ae60; border: none; color: white; border-radius: 5px; width: 100%; margin-bottom: 10px; }
+        .btn { padding: 15px; font-size: 1.1rem; cursor: pointer; background: #27ae60; border: none; color: white; border-radius: 5px; width: 100%; }
         
-        .controls { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 10px; }
-        input[type=range] { width: 60%; }
+        .zoom-controls { display: flex; align-items: center; justify-content: center; gap: 15px; margin-bottom: 10px; background: #333; padding: 10px; border-radius: 5px; }
+        input[type=range] { flex-grow: 1; }
     </style>
 </head>
 <body>
 
     <div class="container">
-        <video id="v" width="640" height="480" autoplay playsinline muted style="display:none;"></video>
-        <canvas id="c" width="640" height="480" style="position:static; pointer-events: auto;"></canvas>
+        <video id="v" width="640" height="480" autoplay playsinline muted></video>
+        <canvas id="c" width="640" height="480"></canvas>
     </div>
 
     <div id="ui">
-        <h2 id="last-hit" style="margin:0 0 10px 0; color: #2ecc71;">STÄLL IN ZOOM & KALIBRERA</h2>
-        
-        <div class="controls">
-            <span>Zoom:</span>
-            <input type="range" id="zoom-slider" min="1" max="3" step="0.1" value="1.5">
+        <div class="zoom-controls">
+            <span>ZOOM</span>
+            <input type="range" id="zoom-slider" min="1" max="4" step="0.1" value="1.5">
         </div>
-
-        <button class="btn" onclick="captureReference()">1. Kalibrera (Töm tavlan)</button>
-        <div class="log" id="event-log">System redo...</div>
+        <button class="btn" onclick="captureReference()">1. KALIBRERA TAVLAN</button>
+        <h2 id="last-hit" style="margin: 10px 0; color: #2ecc71;">VÄNTAR PÅ KAST...</h2>
+        <div class="log" id="event-log">System startat...</div>
     </div>
 
 <script>
@@ -47,13 +46,11 @@ const zoomSlider = document.getElementById('zoom-slider');
 
 let refFrame = null;
 let isCalibrated = false;
-let lastTriggerTime = 0;
 
-// Inställningar för tavlan (Relativt till inzoomad bild)
-const board = { x: 320, y: 240, r: 200 };
+// Inställningar (Dessa matchar nu den inzoomade canvasen 640x480)
+const board = { x: 320, y: 240, r: 180 };
 const sensitivity = 40;
 
-// Starta kameran
 navigator.mediaDevices.getUserMedia({ 
     video: { 
         width: { ideal: 640 }, 
@@ -63,7 +60,7 @@ navigator.mediaDevices.getUserMedia({
 }).then(s => { 
     video.srcObject = s; 
     requestAnimationFrame(process); 
-}).catch(err => log("Kamerafel: " + err));
+});
 
 function log(msg) {
     const p = document.createElement('div');
@@ -72,34 +69,32 @@ function log(msg) {
 }
 
 function captureReference() {
-    // Fångar nuvarande inzoomad bild som referens
+    // Vi tar referensbilden från den redan inzoomade canvasen
     const frame = ctx.getImageData(0, 0, 640, 480);
     refFrame = new Uint8ClampedArray(frame.data);
     isCalibrated = true;
-    log("Kalibrerad! Kasta nu.");
-    hitEl.innerText = "VÄNTAR PÅ KAST...";
+    log("Tavlan kalibrerad med aktuell zoom!");
 }
 
 function process() {
     const zoom = parseFloat(zoomSlider.value);
     
-    // Beräkna zoom-utsnitt (crop)
+    // Beräkna käll-koordinater i videoströmen (Crop)
     const sw = 640 / zoom;
     const sh = 480 / zoom;
     const sx = (640 - sw) / 2;
     const sy = (480 - sh) / 2;
 
-    // Rita inzoomat från video till canvas
+    // Rita den inzoomade delen av videon på hela canvasen
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, 640, 480);
     
     if (isCalibrated) {
-        const currentImageData = ctx.getImageData(0, 0, 640, 480);
-        const currentFrame = currentImageData.data;
+        const currentFrame = ctx.getImageData(0, 0, 640, 480).data;
         let movements = [];
+        const step = 2;
 
-        // Detektions-loop
-        for (let y = board.y - board.r; y < board.y + board.r; y += 3) {
-            for (let x = board.x - board.r; x < board.x + board.r; x += 3) {
+        for (let y = board.y - board.r; y < board.y + board.r; y += step) {
+            for (let x = board.x - board.r; x < board.x + board.r; x += step) {
                 const dx = x - board.x;
                 const dy = y - board.y;
                 
@@ -114,15 +109,11 @@ function process() {
             }
         }
 
-        const now = Date.now();
-        // Om vi ser lagom mycket rörelse och det gått 1.5 sek sen sist
-        if (movements.length > 30 && movements.length < 1000 && (now - lastTriggerTime > 1500)) {
+        if (movements.length > 40 && movements.length < 1200) {
             const avgX = movements.reduce((a, b) => a + b.x, 0) / movements.length;
             const avgY = movements.reduce((a, b) => a + b.y, 0) / movements.length;
             
             triggerHit(avgX, avgY);
-            lastTriggerTime = now;
-            // Uppdatera referens så vi inte triggar på samma pil igen
             refFrame = new Uint8ClampedArray(currentFrame);
         }
     }
@@ -138,8 +129,8 @@ function calculateScore(x, y) {
     const pct = dist / board.r;
 
     if (pct > 1.0) return "MISS";
-    if (pct < 0.035) return "BULL (50)";
-    if (pct < 0.08) return "BULL (25)";
+    if (pct < 0.03) return "BULL (50)";
+    if (pct < 0.07) return "BULL (25)";
 
     const segments = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
     let angle = Math.atan2(dy, dx) * (180 / Math.PI);
@@ -164,21 +155,18 @@ function triggerHit(x, y) {
 function drawOverlay() {
     ctx.lineWidth = 2;
     // Ytterring
-    ctx.strokeStyle = "rgba(46, 204, 113, 0.5)";
+    ctx.strokeStyle = "rgba(0, 255, 0, 0.4)";
     ctx.beginPath();
     ctx.arc(board.x, board.y, board.r, 0, Math.PI * 2);
+    ctx.arc(board.x, board.y, board.r * 0.92, 0, Math.PI * 2);
     ctx.stroke();
     
     // Trippelring
-    ctx.strokeStyle = "rgba(231, 76, 60, 0.4)";
+    ctx.strokeStyle = "rgba(255, 0, 0, 0.3)";
     ctx.beginPath();
     ctx.arc(board.x, board.y, board.r * 0.62, 0, Math.PI * 2);
     ctx.arc(board.x, board.y, board.r * 0.55, 0, Math.PI * 2);
     ctx.stroke();
-
-    // Sikte i mitten
-    ctx.fillStyle = "red";
-    ctx.fillRect(board.x-2, board.y-2, 4, 4);
 }
 </script>
 </body>
