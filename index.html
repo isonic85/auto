@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DeepDart Pro - Fast Response</title>
+    <title>DeepDart - Hardware Zoom</title>
     <style>
         body { background: #121212; color: white; font-family: sans-serif; text-align: center; margin: 0; overflow: hidden; }
         .container { position: relative; width: 100vw; height: 70vh; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden; }
@@ -24,8 +24,8 @@
 
     <div id="ui">
         <div class="zoom-wrap">
-            <span>ZOOM:</span>
-            <input type="range" id="zoom-slider" min="1" max="5" step="0.1" value="1.5">
+            <span id="zoom-label">ZOOM: 1x</span>
+            <input type="range" id="zoom-slider" min="1" max="5" step="0.1" value="1">
         </div>
         <button class="btn" onclick="captureReference()">KALIBRERA (TÖM TAVLAN)</button>
         <h2 id="last-hit" style="color: #2ecc71; margin: 10px 0; font-size: 1.8rem;">VÄNTAR...</h2>
@@ -37,12 +37,15 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d', { willReadFrequently: true });
 const hitEl = document.getElementById('last-hit');
 const zoomSlider = document.getElementById('zoom-slider');
+const zoomLabel = document.getElementById('zoom-label');
 
 let refFrame = null;
 let isCalibrated = false;
 let board = { x: 0, y: 0, r: 0 }; 
 let lastTip = null;
-let cooldown = 0; // För att hindra "multi-triggers" på samma pil
+let cooldown = 0;
+let videoTrack = null;
+let supportsHardwareZoom = false;
 
 navigator.mediaDevices.getUserMedia({ 
     video: { 
@@ -52,6 +55,18 @@ navigator.mediaDevices.getUserMedia({
     } 
 }).then(s => { 
     video.srcObject = s;
+    videoTrack = s.getVideoTracks()[0];
+    
+    // Kolla om kameran stöder hårdvaru-zoom
+    const capabilities = videoTrack.getCapabilities();
+    if (capabilities.zoom) {
+        supportsHardwareZoom = true;
+        zoomSlider.min = capabilities.zoom.min;
+        zoomSlider.max = capabilities.zoom.max;
+        zoomSlider.step = capabilities.zoom.step;
+        console.log("Hårdvaruzoom stöds!");
+    }
+
     video.onloadedmetadata = () => {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
@@ -63,8 +78,19 @@ navigator.mediaDevices.getUserMedia({
     };
 });
 
+zoomSlider.oninput = () => {
+    const val = zoomSlider.value;
+    zoomLabel.innerText = `ZOOM: ${val}x`;
+    
+    if (supportsHardwareZoom) {
+        // Försök zooma med den RIKTIGA linsen
+        videoTrack.applyConstraints({ advanced: [{ zoom: val }] });
+    }
+};
+
 function captureReference() {
-    ctx.drawImage(video, getSx(), getSy(), getSw(), getSh(), 0, 0, canvas.width, canvas.height);
+    // Vid kalibrering ritar vi av den nuvarande (inzoomade) bilden som referens
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
     refFrame = new Uint8ClampedArray(frame.data);
     isCalibrated = true;
@@ -72,69 +98,66 @@ function captureReference() {
     hitEl.innerText = "REDO!";
 }
 
-function getSw() { return video.videoWidth / parseFloat(zoomSlider.value); }
-function getSh() { return video.videoHeight / parseFloat(zoomSlider.value); }
-function getSx() { return (video.videoWidth - getSw()) / 2; }
-function getSy() { return (video.videoHeight - getSh()) / 2; }
-
 function process() {
-    ctx.drawImage(video, getSx(), getSy(), getSw(), getSh(), 0, 0, canvas.width, canvas.height);
+    const zoom = parseFloat(zoomSlider.value);
     
-    if (isCalibrated) {
-        if (cooldown > 0) {
-            cooldown--;
-        } else {
-            const currentFrame = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-            let movements = [];
-            const sensitivity = 35; // Något lägre för snabbare respons
-            const step = 4;
+    if (supportsHardwareZoom) {
+        // Om hårdvaran sköter zoomen, ritar vi bara hela bilden rakt av
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    } else {
+        // DIGITAL FALLBACK: Om hårdvaruzoom inte funkar, kör vi gamla metoden
+        const vw = video.videoWidth;
+        const vh = video.videoHeight;
+        const sw = vw / zoom;
+        const sh = vh / zoom;
+        const sx = (vw - sw) / 2;
+        const sy = (vh - sh) / 2;
+        ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+    }
+    
+    if (isCalibrated && cooldown <= 0) {
+        const currentFrame = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        let movements = [];
+        const sensitivity = 35;
+        const step = 4;
 
-            for (let y = Math.floor(board.y - board.r); y < board.y + board.r; y += step) {
-                for (let x = Math.floor(board.x - board.r); x < board.x + board.r; x += step) {
-                    const idx = (y * canvas.width + x) * 4;
-                    
-                    // Skillnad mellan gammal och ny bild (positivt = mörkare)
-                    const diff = refFrame[idx] - currentFrame[idx]; 
-                    
-                    if (diff > sensitivity) {
-                        const dx = x - board.x;
-                        const dy = y - board.y;
-                        if (dx*dx + dy*dy < board.r*board.r) {
-                            movements.push({x, y});
-                        }
+        for (let y = Math.floor(board.y - board.r); y < board.y + board.r; y += step) {
+            for (let x = Math.floor(board.x - board.r); x < board.x + board.r; x += step) {
+                const idx = (y * canvas.width + x) * 4;
+                const diff = refFrame[idx] - currentFrame[idx]; // Mörkare pixel check
+                
+                if (diff > sensitivity) {
+                    const dx = x - board.x;
+                    const dy = y - board.y;
+                    if (dx*dx + dy*dy < board.r*board.r) {
+                        movements.push({x, y});
                     }
                 }
             }
+        }
 
-            if (movements.length > 12 && movements.length < 1200) {
-                // Hitta spetsen DIREKT
-                let closestDist = Infinity;
-                let tipX = 0; 
-                let tipY = 0;
+        if (movements.length > 12 && movements.length < 1200) {
+            let closestDist = Infinity;
+            let tipX = 0, tipY = 0;
 
-                for (let m of movements) {
-                    const dx = m.x - board.x;
-                    const dy = m.y - board.y;
-                    const d = dx*dx + dy*dy; 
-                    if (d < closestDist) {
-                        closestDist = d;
-                        tipX = m.x;
-                        tipY = m.y;
-                    }
+            for (let m of movements) {
+                const d = Math.pow(m.x - board.x, 2) + Math.pow(m.y - board.y, 2);
+                if (d < closestDist) {
+                    closestDist = d;
+                    tipX = m.x; tipY = m.y;
                 }
+            }
 
-                if (tipX > 0) {
-                    lastTip = { x: tipX, y: tipY };
-                    hitEl.innerText = "TRÄFF: " + calculateScore(tipX, tipY);
-                    
-                    // "Frys" bilden direkt
-                    refFrame = new Uint8ClampedArray(currentFrame);
-                    cooldown = 30; // Vänta ca 0.5 sekunder innan nästa detektering
-                }
+            if (tipX > 0) {
+                lastTip = { x: tipX, y: tipY };
+                hitEl.innerText = "TRÄFF: " + calculateScore(tipX, tipY);
+                refFrame = new Uint8ClampedArray(currentFrame);
+                cooldown = 25;
             }
         }
     }
     
+    if (cooldown > 0) cooldown--;
     drawOverlay();
     requestAnimationFrame(process);
 }
