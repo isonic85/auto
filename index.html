@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DeepDart Pro - Fixed Calibration</title>
+    <title>DeepDart Pro - Smart Tip Detection</title>
     <style>
         body { background: #121212; color: white; font-family: sans-serif; text-align: center; margin: 0; overflow: hidden; }
         .container { position: relative; width: 100vw; height: 60vh; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden; }
@@ -57,6 +57,7 @@ const heightSlider = document.getElementById('height-slider');
 
 let refFrame = null;
 let isCalibrated = false;
+let isProcessingHit = false;
 let board = { x: 0, y: 0, rx: 0, ry: 0 }; 
 let lastTip = null;
 let videoTrack = null;
@@ -91,7 +92,6 @@ function getSh() { return video.videoHeight / parseFloat(zoomSlider.value); }
 function getSx() { return (video.videoWidth - getSw()) / 2; }
 function getSy() { return (video.videoHeight - getSh()) / 2; }
 
-// FIX: Denna funktion ritar nu korrekt oavsett zoom-typ
 function captureReference() {
     if (supportsHardwareZoom) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -103,7 +103,6 @@ function captureReference() {
     isCalibrated = true;
     lastTip = null;
     hitEl.innerText = "REDO!";
-    console.log("Referensbild sparad!");
 }
 
 zoomSlider.oninput = () => {
@@ -111,26 +110,24 @@ zoomSlider.oninput = () => {
     if (supportsHardwareZoom) {
         videoTrack.applyConstraints({ advanced: [{ zoom: zoomSlider.value }] });
     }
-    isCalibrated = false; // Tvinga omkalibrering vid zoom-ändring
+    isCalibrated = false;
 };
 
 widthSlider.oninput = () => { board.rx = parseInt(widthSlider.value); isCalibrated = false; };
 heightSlider.oninput = () => { board.ry = parseInt(heightSlider.value); isCalibrated = false; };
 
 function process() {
-    // Rita live-bild
     if (supportsHardwareZoom) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     } else {
         ctx.drawImage(video, getSx(), getSy(), getSw(), getSh(), 0, 0, canvas.width, canvas.height);
     }
     
-    if (isCalibrated) {
+    if (isCalibrated && !isProcessingHit) {
         const currentFrame = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
         let movements = [];
         const sensitivity = 40;
 
-        // Snabbare loop: var 4:e pixel
         for (let y = Math.floor(board.y - board.ry); y < board.y + board.ry; y += 4) {
             for (let x = Math.floor(board.x - board.rx); x < board.x + board.rx; x += 4) {
                 const dx = x - board.x;
@@ -145,28 +142,61 @@ function process() {
         }
 
         if (movements.length > 15 && movements.length < 1500) {
-            let closestDist = Infinity;
-            let tipX = 0, tipY = 0;
-            for (let m of movements) {
-                const d = Math.pow(m.x - board.x, 2) + Math.pow(m.y - board.y, 2);
-                if (d < closestDist) { closestDist = d; tipX = m.x; tipY = m.y; }
-            }
-            if (tipX > 0) {
-                lastTip = { x: tipX, y: tipY };
-                hitEl.innerText = "TRÄFF: " + calculateScore(tipX, tipY);
-                refFrame = new Uint8ClampedArray(currentFrame);
-            }
+            isProcessingHit = true;
+            setTimeout(() => {
+                analyzeSmartTip(movements);
+                isProcessingHit = false;
+            }, 150);
         }
     }
     drawOverlay();
     requestAnimationFrame(process);
 }
 
+function analyzeSmartTip(movements) {
+    const currentFrame = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    
+    // 1. Hitta tyngdpunkten (centroid) för hela pilen
+    let avgX = 0, avgY = 0;
+    for (let m of movements) {
+        avgX += m.x;
+        avgY += m.y;
+    }
+    avgX /= movements.length;
+    avgY /= movements.length;
+
+    // 2. Skapa en riktning mot bullseye från pilens mitt
+    const dirToCenter = { x: board.x - avgX, y: board.y - avgY };
+    const mag = Math.sqrt(dirToCenter.x**2 + dirToCenter.y**2);
+    const unitDir = { x: dirToCenter.x / mag, y: dirToCenter.y / mag };
+
+    // 3. Hitta punkten som drar mest mot mitten (projektion på vektorn)
+    let bestTipX = 0, bestTipY = 0;
+    let maxPull = -Infinity;
+
+    for (let m of movements) {
+        const pointVec = { x: m.x - avgX, y: m.y - avgY };
+        const pull = pointVec.x * unitDir.x + pointVec.y * unitDir.y;
+
+        if (pull > maxPull) {
+            maxPull = pull;
+            bestTipX = m.x;
+            bestTipY = m.y;
+        }
+    }
+
+    if (bestTipX > 0) {
+        lastTip = { x: bestTipX, y: bestTipY };
+        hitEl.innerText = "TRÄFF: " + calculateScore(bestTipX, bestTipY);
+        refFrame = new Uint8ClampedArray(currentFrame);
+    }
+}
+
 function calculateScore(x, y) {
     const dx = x - board.x;
     const dy = y - board.y;
     const angleRad = Math.atan2(dy, dx);
-    const ellipsRad = Math.sqrt((board.rx**2 * board.ry**2) / (board.ry**2 * Math.cos(angleRad)**2 + board.rx**2 * Math.sin(angleRad)**2));
+    const ellipsRad = Math.sqrt((board.rx**2 * board.ry**2) / (board.ry**2 * Math.cos(angleRad)**2 + board.rx**2 * Math.max(0.001, Math.sin(angleRad)**2)));
     const pct = Math.sqrt(dx*dx + dy*dy) / ellipsRad;
 
     if (pct > 1.0) return "MISS";
@@ -177,6 +207,7 @@ function calculateScore(x, y) {
     let deg = angleRad * (180 / Math.PI) + 90 + 9;
     if (deg < 0) deg += 360;
     const base = segments[Math.floor((deg % 360) / 18)];
+    
     if (pct > 0.92) return `D${base}`;
     if (pct > 0.55 && pct < 0.62) return `T${base}`;
     return base.toString();
@@ -188,11 +219,17 @@ function drawOverlay() {
     ctx.beginPath(); ctx.ellipse(board.x, board.y, board.rx, board.ry, 0, 0, Math.PI*2); ctx.stroke();
     ctx.strokeStyle = "rgba(255, 0, 0, 0.3)";
     ctx.beginPath(); ctx.ellipse(board.x, board.y, board.rx * 0.62, board.ry * 0.62, 0, 0, Math.PI*2); ctx.stroke();
+    
+    // Bullseye markering
     ctx.fillStyle = "red";
     ctx.beginPath(); ctx.arc(board.x, board.y, 5, 0, Math.PI*2); ctx.fill();
+    
     if (lastTip) {
         ctx.fillStyle = "#00d2ff";
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = "white";
         ctx.beginPath(); ctx.arc(lastTip.x, lastTip.y, 10, 0, Math.PI*2); ctx.fill();
+        ctx.shadowBlur = 0;
     }
 }
 </script>
