@@ -3,16 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DeepDart - Hardware Zoom</title>
+    <title>DeepDart Pro - Perspective Fix</title>
     <style>
         body { background: #121212; color: white; font-family: sans-serif; text-align: center; margin: 0; overflow: hidden; }
-        .container { position: relative; width: 100vw; height: 70vh; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+        .container { position: relative; width: 100vw; height: 60vh; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden; }
         video { position: absolute; opacity: 0; pointer-events: none; }
         canvas { max-width: 100%; max-height: 100%; object-fit: contain; background: #000; }
-        #ui { background: #222; padding: 15px; border-top: 2px solid #444; position: fixed; bottom: 0; width: 100%; box-sizing: border-box; height: 30vh; }
-        .zoom-wrap { margin-bottom: 10px; display: flex; align-items: center; justify-content: center; gap: 10px; }
-        input[type=range] { flex-grow: 1; }
-        .btn { padding: 15px; background: #27ae60; border: none; color: white; border-radius: 5px; width: 100%; font-weight: bold; font-size: 1.1rem; }
+        
+        #ui { background: #222; padding: 10px; border-top: 2px solid #444; position: fixed; bottom: 0; width: 100%; box-sizing: border-box; height: 40vh; overflow-y: auto; }
+        .control-group { background: #333; padding: 8px; margin-bottom: 8px; border-radius: 5px; }
+        .slider-wrap { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 5px 0; }
+        .slider-label { font-size: 0.9rem; width: 80px; text-align: right; }
+        input[type=range] { flex-grow: 1; max-width: 300px; }
+        
+        .btn-group { display: flex; gap: 10px; margin-bottom: 10px; }
+        .btn { padding: 12px; background: #27ae60; border: none; color: white; border-radius: 5px; width: 100%; font-weight: bold; font-size: 1rem; cursor: pointer; }
+        .btn-cal { background: #e67e22; } /* Orange för kalibrering */
     </style>
 </head>
 <body>
@@ -23,12 +29,29 @@
     </div>
 
     <div id="ui">
-        <div class="zoom-wrap">
-            <span id="zoom-label">ZOOM: 1x</span>
-            <input type="range" id="zoom-slider" min="1" max="5" step="0.1" value="1">
+        <div class="control-group">
+            <div class="slider-wrap">
+                <span id="zoom-label" class="slider-label">ZOOM: 1x</span>
+                <input type="range" id="zoom-slider" min="1" max="5" step="0.1" value="1">
+            </div>
         </div>
-        <button class="btn" onclick="captureReference()">KALIBRERA (TÖM TAVLAN)</button>
-        <h2 id="last-hit" style="color: #2ecc71; margin: 10px 0; font-size: 1.8rem;">VÄNTAR...</h2>
+
+        <div class="control-group">
+            <div class="slider-wrap">
+                <span class="slider-label">BREDD:</span>
+                <input type="range" id="width-slider" min="50" max="1000" step="1" value="400">
+            </div>
+            <div class="slider-wrap">
+                <span class="slider-label">HÖJD:</span>
+                <input type="range" id="height-slider" min="50" max="1000" step="1" value="400">
+            </div>
+        </div>
+
+        <div class="btn-group">
+            <button class="btn btn-cal" onclick="captureReference()">1. KALIBRERA TAVLAN</button>
+        </div>
+        
+        <h2 id="last-hit" style="color: #2ecc71; margin: 5px 0; font-size: 1.6rem;">VÄNTAR...</h2>
     </div>
 
 <script>
@@ -38,15 +61,19 @@ const ctx = canvas.getContext('2d', { willReadFrequently: true });
 const hitEl = document.getElementById('last-hit');
 const zoomSlider = document.getElementById('zoom-slider');
 const zoomLabel = document.getElementById('zoom-label');
+const widthSlider = document.getElementById('width-slider');
+const heightSlider = document.getElementById('height-slider');
 
 let refFrame = null;
 let isCalibrated = false;
-let board = { x: 0, y: 0, r: 0 }; 
+let isProcessingHit = false;
+// Tavlan har nu en ellips-form (två radier)
+let board = { x: 0, y: 0, rx: 0, ry: 0 }; 
 let lastTip = null;
-let cooldown = 0;
 let videoTrack = null;
 let supportsHardwareZoom = false;
 
+// Starta kameran
 navigator.mediaDevices.getUserMedia({ 
     video: { 
         width: { ideal: 1920 },
@@ -57,7 +84,7 @@ navigator.mediaDevices.getUserMedia({
     video.srcObject = s;
     videoTrack = s.getVideoTracks()[0];
     
-    // Kolla om kameran stöder hårdvaru-zoom
+    // Hårdvaruzoom
     const capabilities = videoTrack.getCapabilities();
     if (capabilities.zoom) {
         supportsHardwareZoom = true;
@@ -68,29 +95,49 @@ navigator.mediaDevices.getUserMedia({
     }
 
     video.onloadedmetadata = () => {
+        // Justera canvas och center
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         board.x = canvas.width / 2;
         board.y = canvas.height / 2;
-        board.r = Math.min(canvas.width, canvas.height) * 0.4;
+        
+        // Initiala radier baserat på sliders
+        board.rx = parseInt(widthSlider.value);
+        board.ry = parseInt(heightSlider.value);
+        
+        // Sätt max-värden för ellips-sliders baserat på upplösning
+        widthSlider.max = canvas.width / 2;
+        heightSlider.max = canvas.height / 2;
+        
         video.play();
         requestAnimationFrame(process);
     };
 });
 
+// Slider-events
 zoomSlider.oninput = () => {
     const val = zoomSlider.value;
-    zoomLabel.innerText = `ZOOM: ${val}x`;
-    
+    zoomLabel.innerText = `ZOOM: ${parseFloat(val).toFixed(1)}x`;
     if (supportsHardwareZoom) {
-        // Försök zooma med den RIKTIGA linsen
         videoTrack.applyConstraints({ advanced: [{ zoom: val }] });
     }
 };
 
+widthSlider.oninput = () => {
+    board.rx = parseInt(widthSlider.value);
+    isCalibrated = false; // Måste kalibrera om när formen ändras
+    hitEl.innerText = "ÄNDRAD - KALIBRERA OM!";
+};
+
+heightSlider.oninput = () => {
+    board.ry = parseInt(heightSlider.value);
+    isCalibrated = false;
+    hitEl.innerText = "ÄNDRAD - KALIBRERA OM!";
+};
+
 function captureReference() {
-    // Vid kalibrering ritar vi av den nuvarande (inzoomade) bilden som referens
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    // Fånga inzoomat
+    ctx.drawImage(video, getSx(), getSy(), getSw(), getSh(), 0, 0, canvas.width, canvas.height);
     const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
     refFrame = new Uint8ClampedArray(frame.data);
     isCalibrated = true;
@@ -98,85 +145,110 @@ function captureReference() {
     hitEl.innerText = "REDO!";
 }
 
+function getSw() { return video.videoWidth / parseFloat(zoomSlider.value); }
+function getSh() { return video.videoHeight / parseFloat(zoomSlider.value); }
+function getSx() { return (video.videoWidth - getSw()) / 2; }
+function getSy() { return (video.videoHeight - getSh()) / 2; }
+
 function process() {
-    const zoom = parseFloat(zoomSlider.value);
-    
+    // 1. Rita live-bild
     if (supportsHardwareZoom) {
-        // Om hårdvaran sköter zoomen, ritar vi bara hela bilden rakt av
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     } else {
-        // DIGITAL FALLBACK: Om hårdvaruzoom inte funkar, kör vi gamla metoden
-        const vw = video.videoWidth;
-        const vh = video.videoHeight;
-        const sw = vw / zoom;
-        const sh = vh / zoom;
-        const sx = (vw - sw) / 2;
-        const sy = (vh - sh) / 2;
-        ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+        ctx.drawImage(video, getSx(), getSy(), getSw(), getSh(), 0, 0, canvas.width, canvas.height);
     }
     
-    if (isCalibrated && cooldown <= 0) {
+    // 2. Rörelseanalys (Ellips-check)
+    if (isCalibrated && !isProcessingHit) {
         const currentFrame = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
         let movements = [];
-        const sensitivity = 35;
+        const sensitivity = 45;
         const step = 4;
 
-        for (let y = Math.floor(board.y - board.r); y < board.y + board.r; y += step) {
-            for (let x = Math.floor(board.x - board.r); x < board.x + board.r; x += step) {
-                const idx = (y * canvas.width + x) * 4;
-                const diff = refFrame[idx] - currentFrame[idx]; // Mörkare pixel check
+        // Loopa inom ellipsens område
+        for (let y = Math.floor(board.y - board.ry); y < board.y + board.ry; y += step) {
+            for (let x = Math.floor(board.x - board.rx); x < board.x + board.rx; x += step) {
                 
-                if (diff > sensitivity) {
-                    const dx = x - board.x;
-                    const dy = y - board.y;
-                    if (dx*dx + dy*dy < board.r*board.r) {
+                // PRECISION: Är vi inom ellipsen? (Matematisk check)
+                // (x-h)^2 / a^2 + (y-k)^2 / b^2 <= 1
+                const dx = x - board.x;
+                const dy = y - board.y;
+                const normalizedX = (dx * dx) / (board.rx * board.rx);
+                const normalizedY = (dy * dy) / (board.ry * board.ry);
+                
+                if (normalizedX + normalizedY <= 1) {
+                    const idx = (y * canvas.width + x) * 4;
+                    const diff = refFrame[idx] - currentFrame[idx]; // Mörkare pixel
+                    
+                    if (diff > sensitivity) {
                         movements.push({x, y});
                     }
                 }
             }
         }
 
-        if (movements.length > 12 && movements.length < 1200) {
-            let closestDist = Infinity;
-            let tipX = 0, tipY = 0;
-
-            for (let m of movements) {
-                const d = Math.pow(m.x - board.x, 2) + Math.pow(m.y - board.y, 2);
-                if (d < closestDist) {
-                    closestDist = d;
-                    tipX = m.x; tipY = m.y;
-                }
-            }
-
-            if (tipX > 0) {
-                lastTip = { x: tipX, y: tipY };
-                hitEl.innerText = "TRÄFF: " + calculateScore(tipX, tipY);
-                refFrame = new Uint8ClampedArray(currentFrame);
-                cooldown = 25;
-            }
+        if (movements.length > 15 && movements.length < 1500) {
+            isProcessingHit = true; 
+            
+            // Vänta 150ms för stabilisering
+            setTimeout(() => {
+                analyzeStableHit(movements);
+                isProcessingHit = false;
+            }, 150);
         }
     }
     
-    if (cooldown > 0) cooldown--;
     drawOverlay();
     requestAnimationFrame(process);
+}
+
+function analyzeStableHit(movements) {
+    const stableFrame = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    
+    let closestDist = Infinity;
+    let tipX = 0, tipY = 0;
+
+    // Hitta spetsen (närmast bullseye)
+    for (let m of movements) {
+        const d = Math.pow(m.x - board.x, 2) + Math.pow(m.y - board.y, 2);
+        if (d < closestDist) {
+            closestDist = d;
+            tipX = m.x; tipY = m.y;
+        }
+    }
+    
+    if (tipX > 0) {
+        lastTip = { x: tipX, y: tipY };
+        const score = calculateScore(tipX, tipY);
+        hitEl.innerText = "TRÄFF: " + score;
+        refFrame = new Uint8ClampedArray(stableFrame);
+    }
 }
 
 function calculateScore(x, y) {
     const dx = x - board.x;
     const dy = y - board.y;
-    const dist = Math.sqrt(dx*dx + dy*dy);
-    const pct = dist / board.r;
+    
+    // Beräkna "poäng-procent" relativt till ellips-formen
+    // Vi normaliserar avståndet baserat på vinkeln och ellips-radierna
+    const angleRad = Math.atan2(dy, dx);
+    const ellipsRadAtAngle = Math.sqrt(
+        (board.rx * board.rx * board.ry * board.ry) /
+        (board.ry * board.ry * Math.pow(Math.cos(angleRad), 2) + board.rx * board.rx * Math.pow(Math.sin(angleRad), 2))
+    );
+    
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const pct = dist / ellipsRadAtAngle;
 
     if (pct > 1.0) return "MISS";
     if (pct < 0.035) return "BULL (50)";
     if (pct < 0.08) return "BULL (25)";
 
     const segments = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
-    let angle = Math.atan2(dy, dx) * (180 / Math.PI);
-    angle = (angle + 90 + 9) % 360;
-    if (angle < 0) angle += 360;
-    const baseScore = segments[Math.floor(angle / 18)];
+    let angleDeg = angleRad * (180 / Math.PI);
+    angleDeg = (angleDeg + 90 + 9) % 360;
+    if (angleDeg < 0) angleDeg += 360;
+    const baseScore = segments[Math.floor(angleDeg / 18)];
 
     if (pct > 0.92) return `D${baseScore}`;
     if (pct > 0.55 && pct < 0.62) return `T${baseScore}`;
@@ -185,23 +257,26 @@ function calculateScore(x, y) {
 
 function drawOverlay() {
     ctx.lineWidth = 4;
-    ctx.strokeStyle = "rgba(0, 255, 0, 0.3)";
-    ctx.beginPath();
-    ctx.arc(board.x, board.y, board.r, 0, Math.PI * 2);
-    ctx.arc(board.x, board.y, board.r * 0.92, 0, Math.PI * 2);
-    ctx.stroke();
     
-    ctx.strokeStyle = "rgba(255, 0, 0, 0.2)";
-    ctx.beginPath();
-    ctx.arc(board.x, board.y, board.r * 0.62, 0, Math.PI * 2);
-    ctx.arc(board.x, board.y, board.r * 0.55, 0, Math.PI * 2);
-    ctx.stroke();
+    // Rita Ellips-zoner
+    // Ytterring & Dubbel
+    ctx.strokeStyle = "rgba(0, 255, 0, 0.4)";
+    ctx.beginPath(); ctx.ellipse(board.x, board.y, board.rx, board.ry, 0, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(board.x, board.y, board.rx * 0.92, board.ry * 0.92, 0, 0, Math.PI*2); ctx.stroke();
+    
+    // Trippel
+    ctx.strokeStyle = "rgba(255, 0, 0, 0.3)";
+    ctx.beginPath(); ctx.ellipse(board.x, board.y, board.rx * 0.62, board.ry * 0.62, 0, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(board.x, board.y, board.rx * 0.55, board.ry * 0.55, 0, 0, Math.PI*2); ctx.stroke();
 
+    // Sikte (Mitten)
+    ctx.fillStyle = "red";
+    ctx.beginPath(); ctx.arc(board.x, board.y, 6, 0, Math.PI*2); ctx.fill();
+
+    // Spetsen (Blå prick)
     if (lastTip) {
         ctx.fillStyle = "#00d2ff";
-        ctx.beginPath();
-        ctx.arc(lastTip.x, lastTip.y, 8, 0, Math.PI*2);
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(lastTip.x, lastTip.y, 10, 0, Math.PI*2); ctx.fill();
     }
 }
 </script>
