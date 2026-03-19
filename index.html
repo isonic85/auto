@@ -3,69 +3,84 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DeepDart Pro - iPhone Optimized</title>
+    <title>DeepDart Pro - iPhone Fix</title>
     <style>
-        body { background: #121212; color: white; font-family: sans-serif; margin: 0; overflow: hidden; touch-action: none; }
+        body { background: #121212; color: white; font-family: -apple-system, sans-serif; margin: 0; overflow: hidden; touch-action: none; }
         
-        /* Behållaren för kameran tar upp 65% av skärmen */
+        /* Fixar så att hela kamerabilden syns och är klickbar */
         .container { 
             position: relative; 
             width: 100vw; 
-            height: 65vh; 
+            height: 60vh; 
             background: #000; 
             display: flex;
             align-items: center;
             justify-content: center;
+            overflow: hidden;
         }
         
-        /* Canvasen skalas nu för att alltid synas i sin helhet */
         canvas { 
             max-width: 100%; 
             max-height: 100%; 
             object-fit: contain; 
             touch-action: none;
+            display: block;
         }
         
         video { position: absolute; opacity: 0; pointer-events: none; }
         
-        /* Kontrollpanelen tar upp resten av skärmen */
         #ui { 
-            background: #222; 
-            height: 35vh; 
-            padding: 10px; 
-            border-top: 2px solid #444; 
+            background: #1c1c1e; 
+            height: 40vh; 
+            padding: 15px; 
+            border-top: 1px solid #38383a; 
             box-sizing: border-box;
             display: flex;
             flex-direction: column;
-            justify-content: space-between;
+            gap: 10px;
         }
 
-        .control-row { margin-bottom: 10px; }
-        .slider-wrap { display: flex; align-items: center; gap: 10px; background: #333; padding: 10px; border-radius: 8px; }
-        input[type=range] { flex-grow: 1; height: 25px; }
+        .slider-wrap { 
+            display: flex; 
+            align-items: center; 
+            gap: 12px; 
+            background: #2c2c2e; 
+            padding: 12px; 
+            border-radius: 12px; 
+        }
+        
+        input[type=range] { flex-grow: 1; height: 30px; accent-color: #0a84ff; }
 
         #hit-display { 
-            color: #2ecc71; 
-            font-size: 2.2rem; 
-            font-weight: bold; 
-            text-shadow: 0 0 10px rgba(46, 204, 113, 0.3);
+            color: #32d74b; 
+            font-size: 2.5rem; 
+            font-weight: 900; 
+            text-align: center;
             margin: 5px 0;
+            font-variant-numeric: tabular-nums;
         }
+        
+        .btn-row { display: flex; gap: 10px; }
         
         .btn { 
+            flex: 2;
             padding: 18px; 
-            background: #e67e22; 
+            background: #ff9500; 
             border: none; 
             color: white; 
-            border-radius: 8px; 
-            width: 100%; 
+            border-radius: 14px; 
             font-weight: bold; 
-            font-size: 1.2rem; 
-            box-shadow: 0 4px 0 #d35400;
+            font-size: 1.1rem;
+            -webkit-tap-highlight-color: transparent;
         }
-        .btn:active { transform: translateY(2px); box-shadow: 0 2px 0 #d35400; }
-        
-        .hint { font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+
+        .btn-reset { 
+            flex: 1;
+            background: #48484a; 
+            font-size: 0.9rem;
+        }
+
+        .hint { font-size: 0.8rem; color: #8e8e93; text-align: center; }
     </style>
 </head>
 <body>
@@ -76,17 +91,18 @@
     </div>
 
     <div id="ui">
-        <div class="control-row">
-            <div class="hint">Dra punkter till: 20, 6, 3, 11</div>
-            <div class="slider-wrap">
-                <span id="zoom-label" style="min-width: 70px;">ZOOM: 1x</span>
-                <input type="range" id="zoom-slider" min="1" max="5" step="0.1" value="1">
-            </div>
+        <div class="slider-wrap">
+            <span id="zoom-label" style="font-weight:600; min-width:85px;">ZOOM: 1.0x</span>
+            <input type="range" id="zoom-slider" min="1" max="5" step="0.1" value="1">
         </div>
 
         <div id="hit-display">VÄNTAR...</div>
         
-        <button class="btn" onclick="captureReference()">KALIBRERA TAVLA</button>
+        <div class="btn-row">
+            <button class="btn btn-reset" onclick="resetPoints()">RESET</button>
+            <button class="btn" onclick="captureReference()">KALIBRERA</button>
+        </div>
+        <div class="hint">Dra ringarna till ytterkant: 20, 6, 3, 11</div>
     </div>
 
 <script>
@@ -103,12 +119,11 @@ let videoTrack = null;
 let supportsHardwareZoom = false;
 let lastTip = null;
 
-// Kalibreringspunkter
 let points = [
-    { x: 0, y: 0, color: '#ff4757', label: '20' },
-    { x: 0, y: 0, color: '#1e90ff', label: '6' },
-    { x: 0, y: 0, color: '#ffa502', label: '3' },
-    { x: 0, y: 0, color: '#2ed573', label: '11' }
+    { x: 0, y: 0, color: '#ff3b30', label: '20' },
+    { x: 0, y: 0, color: '#007aff', label: '6' },
+    { x: 0, y: 0, color: '#ffcc00', label: '3' },
+    { x: 0, y: 0, color: '#34c759', label: '11' }
 ];
 let draggedPoint = null;
 
@@ -134,28 +149,39 @@ navigator.mediaDevices.getUserMedia({
 });
 
 function resetPoints() {
-    const cx = canvas.width/2; const cy = canvas.height/2; const r = canvas.height * 0.35;
-    points[0].x = cx; points[0].y = cy - r;
-    points[1].x = cx + r; points[1].y = cy;
-    points[2].x = cx; points[2].y = cy + r;
-    points[3].x = cx - r; points[3].y = cy;
+    // Sätter punkterna i en säker kvadrat i mitten av bilden
+    const w = canvas.width;
+    const h = canvas.height;
+    const size = Math.min(w, h) * 0.25;
+    
+    points[0].x = w/2;        points[0].y = h/2 - size; // 20
+    points[1].x = w/2 + size; points[1].y = h/2;        // 6
+    points[2].x = w/2;        points[2].y = h/2 + size; // 3
+    points[3].x = w/2 - size; points[3].y = h/2;        // 11
+    isCalibrated = false;
+    lastTip = null;
 }
 
-// Touch-logik anpassad för iPhone
 function getMousePos(e) {
     const rect = canvas.getBoundingClientRect();
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    
+    // Räknar om skärm-koordinater till canvas-koordinater (Viktigt!)
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    
     return {
-        x: (clientX - rect.left) * (canvas.width / rect.width),
-        y: (clientY - rect.top) * (canvas.height / rect.height)
+        x: (clientX - rect.left) * scaleX,
+        y: (clientY - rect.top) * scaleY
     };
 }
 
 canvas.addEventListener('touchstart', e => {
     const pos = getMousePos(e);
+    // Stor träffyta för fingrar (80 pixlar)
     points.forEach(p => {
-        if (Math.sqrt((p.x - pos.x)**2 + (p.y - pos.y)**2) < 60) draggedPoint = p;
+        if (Math.sqrt((p.x - pos.x)**2 + (p.y - pos.y)**2) < 80) draggedPoint = p;
     });
 }, {passive: false});
 
@@ -172,21 +198,16 @@ window.addEventListener('touchmove', e => {
 window.addEventListener('touchend', () => draggedPoint = null);
 
 zoomSlider.oninput = () => {
-    zoomLabel.innerText = `ZOOM: ${parseFloat(zoomSlider.value).toFixed(1)}x`;
+    const val = parseFloat(zoomSlider.value);
+    zoomLabel.innerText = `ZOOM: ${val.toFixed(1)}x`;
     if (supportsHardwareZoom) {
-        videoTrack.applyConstraints({ advanced: [{ zoom: zoomSlider.value }] });
+        videoTrack.applyConstraints({ advanced: [{ zoom: val }] });
     }
     isCalibrated = false;
 };
 
-function getSw() { return video.videoWidth / parseFloat(zoomSlider.value); }
-function getSh() { return video.videoHeight / parseFloat(zoomSlider.value); }
-function getSx() { return (video.videoWidth - getSw()) / 2; }
-function getSy() { return (video.videoHeight - getSh()) / 2; }
-
 function captureReference() {
-    if (supportsHardwareZoom) ctx.drawImage(video, 0, 0);
-    else ctx.drawImage(video, getSx(), getSy(), getSw(), getSh(), 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     refFrame = new Uint8ClampedArray(ctx.getImageData(0,0,canvas.width,canvas.height).data);
     isCalibrated = true;
     lastTip = null;
@@ -194,25 +215,30 @@ function captureReference() {
 }
 
 function process() {
-    if (supportsHardwareZoom) ctx.drawImage(video, 0, 0);
-    else ctx.drawImage(video, getSx(), getSy(), getSw(), getSh(), 0, 0, canvas.width, canvas.height);
+    // Om vi inte har hårdvaruzoom ritar vi den beskurna bilden
+    if (supportsHardwareZoom) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    } else {
+        const zoom = parseFloat(zoomSlider.value);
+        const sw = video.videoWidth / zoom;
+        const sh = video.videoHeight / zoom;
+        const sx = (video.videoWidth - sw) / 2;
+        const sy = (video.videoHeight - sh) / 2;
+        ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+    }
     
     if (isCalibrated) {
         const currentFrame = ctx.getImageData(0,0,canvas.width,canvas.height).data;
         let moves = [];
-        const sens = 45;
-        // Bounding box för snabbare sökning
-        const xMin = Math.min(...points.map(p=>p.x))-20, xMax = Math.max(...points.map(p=>p.x))+20;
-        const yMin = Math.min(...points.map(p=>p.y))-20, yMax = Math.max(...points.map(p=>p.y))+20;
-
-        for(let y=Math.floor(yMin); y<yMax; y+=5) {
-            for(let x=Math.floor(xMin); x<xMax; x+=5) {
+        // Optimerat för rörelse
+        for(let y=100; y<canvas.height-100; y+=6) {
+            for(let x=100; x<canvas.width-100; x+=6) {
                 const i = (y*canvas.width+x)*4;
-                if(refFrame[i]-currentFrame[i] > sens) moves.push({x,y});
+                if(refFrame[i]-currentFrame[i] > 45) moves.push({x,y});
             }
         }
 
-        if(moves.length > 20 && moves.length < 2000) {
+        if(moves.length > 15 && moves.length < 1500) {
             const center = getLineIntersection(points[0], points[2], points[1], points[3]);
             let sumX=0, sumY=0; moves.forEach(m=>{sumX+=m.x; sumY+=m.y;});
             const avgX=sumX/moves.length, avgY=sumY/moves.length;
@@ -236,6 +262,7 @@ function process() {
 
 function getLineIntersection(p1,p2,p3,p4) {
     const d = (p4.y-p3.y)*(p2.x-p1.x)-(p4.x-p3.x)*(p2.y-p1.y);
+    if(d===0) return {x: canvas.width/2, y: canvas.height/2};
     const ua = ((p4.x-p3.x)*(p1.y-p3.y)-(p4.y-p3.y)*(p1.x-p3.x))/d;
     return { x: p1.x+ua*(p2.x-p1.x), y: p1.y+ua*(p2.y-p1.y) };
 }
@@ -244,8 +271,10 @@ function calculateScore(tip, center) {
     const dx=tip.x-center.x, dy=tip.y-center.y;
     let ang = Math.atan2(dy,dx)*(180/Math.PI)+90+9;
     if(ang<0) ang+=360;
-    const r20 = Math.sqrt((points[0].x-center.x)**2+(points[0].y-center.y)**2);
-    const pct = Math.sqrt(dx*dx+dy*dy)/r20;
+    // Beräkna radie baserat på snittet av alla 4 punkter för bättre precision
+    const r = (Math.abs(points[0].y-center.y) + Math.abs(points[1].x-center.x))/2;
+    const pct = Math.sqrt(dx*dx+dy*dy)/r;
+    
     if(pct>1.05) return "MISS";
     if(pct<0.04) return "BULL (50)";
     if(pct<0.09) return "BULL (25)";
@@ -257,19 +286,26 @@ function calculateScore(tip, center) {
 }
 
 function drawOverlay() {
-    ctx.strokeStyle = "rgba(255,255,255,0.3)";
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(255,255,255,0.4)";
+    ctx.setLineDash([10, 10]);
     ctx.beginPath(); ctx.moveTo(points[0].x, points[0].y); ctx.lineTo(points[2].x, points[2].y); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(points[1].x, points[1].y); ctx.lineTo(points[3].x, points[3].y); ctx.stroke();
+    ctx.setLineDash([]);
+
     points.forEach(p => {
+        ctx.shadowBlur = 10; ctx.shadowColor = "black";
         ctx.fillStyle = p.color;
-        ctx.beginPath(); ctx.arc(p.x, p.y, 25, 0, Math.PI*2); ctx.fill();
-        ctx.fillStyle = "white"; ctx.font = "bold 30px sans-serif";
-        ctx.fillText(p.label, p.x-15, p.y-40);
+        ctx.beginPath(); ctx.arc(p.x, p.y, 35, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = "white"; ctx.stroke();
+        ctx.fillStyle = "white"; ctx.font = "bold 40px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(p.label, p.x, p.y + 15);
     });
+    
     if(lastTip) {
         ctx.fillStyle = "#00d2ff";
-        ctx.beginPath(); ctx.arc(lastTip.x, lastTip.y, 15, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(lastTip.x, lastTip.y, 18, 0, Math.PI*2); ctx.fill();
     }
 }
 </script>
