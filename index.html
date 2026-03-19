@@ -3,23 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DeepDart Pro - High Res Zoom</title>
+    <title>DeepDart Pro - Runda Cirklar</title>
     <style>
-        body { background: #121212; color: white; font-family: sans-serif; text-align: center; margin: 0; }
-        .container { position: relative; display: inline-block; background: #000; width: 100vw; max-width: 640px; aspect-ratio: 4/3; }
-        video { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
-        canvas { width: 100%; height: 100%; background: #000; }
-        #ui { background: #222; padding: 15px; border-top: 2px solid #444; position: fixed; bottom: 0; width: 100%; box-sizing: border-box; }
+        body { background: #121212; color: white; font-family: sans-serif; text-align: center; margin: 0; overflow: hidden; }
+        .container { position: relative; width: 100vw; height: 70vh; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+        video { position: absolute; opacity: 0; pointer-events: none; }
+        canvas { max-width: 100%; max-height: 100%; object-fit: contain; background: #000; }
+        
+        #ui { background: #222; padding: 15px; border-top: 2px solid #444; position: fixed; bottom: 0; width: 100%; box-sizing: border-box; height: 30vh; }
         .zoom-wrap { margin-bottom: 10px; display: flex; align-items: center; justify-content: center; gap: 10px; }
         input[type=range] { flex-grow: 1; }
-        .btn { padding: 15px; background: #27ae60; border: none; color: white; border-radius: 5px; width: 100%; font-weight: bold; }
+        .btn { padding: 15px; background: #27ae60; border: none; color: white; border-radius: 5px; width: 100%; font-weight: bold; font-size: 1.1rem; }
     </style>
 </head>
 <body>
 
     <div class="container">
         <video id="v" autoplay playsinline muted></video>
-        <canvas id="c" width="1280" height="960"></canvas> </div>
+        <canvas id="c"></canvas>
+    </div>
 
     <div id="ui">
         <div class="zoom-wrap">
@@ -39,69 +41,63 @@ const zoomSlider = document.getElementById('zoom-slider');
 
 let refFrame = null;
 let isCalibrated = false;
+let board = { x: 0, y: 0, r: 0 }; // Beräknas dynamiskt
 
-// Brädans inställningar (nu anpassade för 1280x960 internt)
-const board = { x: 640, y: 480, r: 400 }; 
-const sensitivity = 45;
-
-// Försök hämta högupplöst video
 navigator.mediaDevices.getUserMedia({ 
     video: { 
-        width: { ideal: 1920 }, // Fråga efter Full HD
+        width: { ideal: 1920 },
         height: { ideal: 1080 },
         facingMode: "environment" 
     } 
-}).then(async s => { 
+}).then(s => { 
     video.srcObject = s;
-    
-    // Försök aktivera hårdvaruzoom om telefonen stöder det (Advanced constraints)
-    const track = s.getVideoTracks()[0];
-    const capabilities = track.getCapabilities();
-    
-    // Om mobilen stöder riktig zoom, koppla slidern till hårdvaran!
-    if (capabilities.zoom) {
-        zoomSlider.oninput = () => {
-            track.applyConstraints({ advanced: [{ zoom: zoomSlider.value }] });
-        };
-    }
-
-    video.play();
-    requestAnimationFrame(process); 
+    video.onloadedmetadata = () => {
+        // Anpassa canvas till kamerans faktiska proportioner
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        
+        // Sätt brädans center och radie baserat på den riktiga bilden
+        board.x = canvas.width / 2;
+        board.y = canvas.height / 2;
+        board.r = Math.min(canvas.width, canvas.height) * 0.4;
+        
+        video.play();
+        requestAnimationFrame(process);
+    };
 });
 
 function captureReference() {
-    const frame = ctx.getImageData(0, 0, 1280, 960);
+    const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
     refFrame = new Uint8ClampedArray(frame.data);
     isCalibrated = true;
 }
 
 function process() {
-    // Om hårdvaruzoom inte stöds, kör vi vår digitala fallback
     const zoom = parseFloat(zoomSlider.value);
-    
-    // Vi läser från videons faktiska storlek (t.ex. 1920x1080)
-    const vw = video.videoWidth || 640;
-    const vh = video.videoHeight || 480;
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
 
+    // Beräkna utsnitt (Crop) som bevarar aspektförhållandet
     const sw = vw / zoom;
     const sh = vh / zoom;
     const sx = (vw - sw) / 2;
     const sy = (vh - sh) / 2;
 
-    // Rita inzoomat på vår högupplösta canvas (1280x960)
-    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, 1280, 960);
+    // Rita inzoomat utan att stretcha bilden
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
     
     if (isCalibrated) {
-        const currentFrame = ctx.getImageData(0, 0, 1280, 960).data;
+        const currentFrame = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
         let movements = [];
-        
-        // Vi hoppar över fler pixlar (step 4) för att orka med den högre upplösningen
-        for (let y = board.y - board.r; y < board.y + board.r; y += 4) {
-            for (let x = board.x - board.r; x < board.x + board.r; x += 4) {
+        const sensitivity = 45;
+        const step = 4; // Hoppa över pixlar för prestanda
+
+        for (let y = Math.floor(board.y - board.r); y < board.y + board.r; y += step) {
+            for (let x = Math.floor(board.x - board.r); x < board.x + board.r; x += step) {
                 const dx = x - board.x;
                 const dy = y - board.y;
                 if (dx*dx + dy*dy < board.r*board.r) {
-                    const idx = (y * 1280 + x) * 4;
+                    const idx = (y * canvas.width + x) * 4;
                     const diff = Math.abs(currentFrame[idx] - refFrame[idx]);
                     if (diff > sensitivity) {
                         movements.push({x, y});
@@ -136,8 +132,7 @@ function calculateScore(x, y) {
     let angle = Math.atan2(dy, dx) * (180 / Math.PI);
     angle = (angle + 90 + 9) % 360;
     if (angle < 0) angle += 360;
-    const segmentIdx = Math.floor(angle / 18);
-    const baseScore = segments[segmentIdx];
+    const baseScore = segments[Math.floor(angle / 18)];
 
     if (pct > 0.92) return `D${baseScore}`;
     if (pct > 0.55 && pct < 0.62) return `T${baseScore}`;
@@ -150,11 +145,20 @@ function triggerHit(x, y) {
 
 function drawOverlay() {
     ctx.lineWidth = 4;
-    ctx.strokeStyle = "rgba(0, 255, 0, 0.3)";
+    ctx.strokeStyle = "rgba(0, 255, 0, 0.4)";
     ctx.beginPath();
     ctx.arc(board.x, board.y, board.r, 0, Math.PI * 2);
+    ctx.arc(board.x, board.y, board.r * 0.92, 0, Math.PI * 2);
     ctx.stroke();
-    // Mitten-prick för sikte
+    
+    // Trippelring
+    ctx.strokeStyle = "rgba(255, 0, 0, 0.3)";
+    ctx.beginPath();
+    ctx.arc(board.x, board.y, board.r * 0.62, 0, Math.PI * 2);
+    ctx.arc(board.x, board.y, board.r * 0.55, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Mitten-prick
     ctx.fillStyle = "red";
     ctx.beginPath();
     ctx.arc(board.x, board.y, 5, 0, Math.PI*2);
