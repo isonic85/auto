@@ -127,7 +127,29 @@ if (movements.length > 15 && movements.length < 2000) {
             // Vi använder nu tipX och tipY istället för genomsnittet
             triggerHit(tipX, tipY);
             refFrame = new Uint8ClampedArray(currentFrame);
+        if (movements.length > 15 && movements.length < 2000) {
+            // Istället för medelvärde, hitta den punkt som är närmast mitten (spetsen)
+            let closestDist = Infinity;
+            let tipX = 0;
+            let tipY = 0;
+
+            for (let m of movements) {
+                const dx = m.x - board.x;
+                const dy = m.y - board.y;
+                const d = dx*dx + dy*dy; // Pythagoras (utan sqrt för snabbhet)
+                
+                if (d < closestDist) {
+                    closestDist = d;
+                    tipX = m.x;
+                    tipY = m.y;
+                }
+            }
+            
+            // Vi använder nu tipX och tipY istället för genomsnittet
+            triggerHit(tipX, tipY);
+            refFrame = new Uint8ClampedArray(currentFrame);
         }
+    }
     
     drawOverlay();
     requestAnimationFrame(process);
