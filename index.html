@@ -3,107 +3,106 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DeepDart Web Clone - AutoScorer</title>
+    <title>DeepDart Pro - High Res Zoom</title>
     <style>
         body { background: #121212; color: white; font-family: sans-serif; text-align: center; margin: 0; }
-        .container { position: relative; display: inline-block; margin-top: 10px; line-height: 0; background: #000; }
-        /* Vi visar videon men döljer den med CSS istället för display:none för att hålla strömmen aktiv */
+        .container { position: relative; display: inline-block; background: #000; width: 100vw; max-width: 640px; aspect-ratio: 4/3; }
         video { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
-        canvas { background: #000; max-width: 100vw; height: auto; cursor: crosshair; }
-        #ui { background: #222; padding: 20px; border-top: 2px solid #444; position: fixed; bottom: 0; width: 100%; box-sizing: border-box; }
-        .log { height: 80px; overflow-y: auto; background: #000; font-family: monospace; padding: 10px; margin: 10px 0; border: 1px solid #444; font-size: 0.8rem; text-align: left; }
-        .btn { padding: 15px 30px; font-size: 1.1rem; cursor: pointer; background: #27ae60; border: none; color: white; border-radius: 5px; width: 100%; }
+        canvas { width: 100%; height: 100%; background: #000; }
+        #ui { background: #222; padding: 15px; border-top: 2px solid #444; position: fixed; bottom: 0; width: 100%; box-sizing: border-box; }
         .zoom-wrap { margin-bottom: 10px; display: flex; align-items: center; justify-content: center; gap: 10px; }
-        input[type=range] { flex-grow: 1; max-width: 300px; }
+        input[type=range] { flex-grow: 1; }
+        .btn { padding: 15px; background: #27ae60; border: none; color: white; border-radius: 5px; width: 100%; font-weight: bold; }
     </style>
 </head>
 <body>
 
     <div class="container">
-        <video id="v" width="640" height="480" autoplay playsinline muted></video>
-        <canvas id="c" width="640" height="480"></canvas>
-    </div>
+        <video id="v" autoplay playsinline muted></video>
+        <canvas id="c" width="1280" height="960"></canvas> </div>
 
     <div id="ui">
         <div class="zoom-wrap">
             <span>ZOOM:</span>
-            <input type="range" id="zoom-slider" min="1" max="4" step="0.1" value="1.5">
+            <input type="range" id="zoom-slider" min="1" max="5" step="0.1" value="1">
         </div>
-        <button class="btn" onclick="captureReference()">1. Kalibrera (Töm tavlan)</button>
-        <h1 id="last-hit" style="font-size: 1.5rem; margin: 10px 0;">VÄNTAR PÅ KAST...</h1>
-        <div class="log" id="event-log">System startat...</div>
+        <button class="btn" onclick="captureReference()">KALIBRERA (TÖM TAVLAN)</button>
+        <h2 id="last-hit" style="color: #2ecc71; margin: 10px 0;">VÄNTAR PÅ KAST...</h2>
     </div>
 
 <script>
 const video = document.getElementById('v');
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d', { willReadFrequently: true });
-const logEl = document.getElementById('event-log');
 const hitEl = document.getElementById('last-hit');
 const zoomSlider = document.getElementById('zoom-slider');
 
 let refFrame = null;
 let isCalibrated = false;
 
-// Inställningar
-const board = { x: 320, y: 240, r: 180 };
-const sensitivity = 40;
+// Brädans inställningar (nu anpassade för 1280x960 internt)
+const board = { x: 640, y: 480, r: 400 }; 
+const sensitivity = 45;
 
-// Viktigt för iPhone: Starta kameran med specifika inställningar
+// Försök hämta högupplöst video
 navigator.mediaDevices.getUserMedia({ 
     video: { 
-        width: 640, 
-        height: 480, 
+        width: { ideal: 1920 }, // Fråga efter Full HD
+        height: { ideal: 1080 },
         facingMode: "environment" 
     } 
-}).then(s => { 
+}).then(async s => { 
     video.srcObject = s;
-    // Tvinga igång video-play för Safari
+    
+    // Försök aktivera hårdvaruzoom om telefonen stöder det (Advanced constraints)
+    const track = s.getVideoTracks()[0];
+    const capabilities = track.getCapabilities();
+    
+    // Om mobilen stöder riktig zoom, koppla slidern till hårdvaran!
+    if (capabilities.zoom) {
+        zoomSlider.oninput = () => {
+            track.applyConstraints({ advanced: [{ zoom: zoomSlider.value }] });
+        };
+    }
+
     video.play();
     requestAnimationFrame(process); 
-}).catch(err => log("Kamera-fel: " + err));
-
-function log(msg) {
-    const p = document.createElement('div');
-    p.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
-    logEl.prepend(p);
-}
+});
 
 function captureReference() {
-    // Fånga nuvarande vy på canvasen
-    const frame = ctx.getImageData(0, 0, 640, 480);
+    const frame = ctx.getImageData(0, 0, 1280, 960);
     refFrame = new Uint8ClampedArray(frame.data);
     isCalibrated = true;
-    log("Tavlan kalibrerad!");
 }
 
 function process() {
-    // 1. Rendera videon till canvas med ZOOM
+    // Om hårdvaruzoom inte stöds, kör vi vår digitala fallback
     const zoom = parseFloat(zoomSlider.value);
-    const sw = 640 / zoom;
-    const sh = 480 / zoom;
-    const sx = (640 - sw) / 2;
-    const sy = (480 - sh) / 2;
-
-    // Rita inzoomat
-    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, 640, 480);
     
-    // 2. Analysera rörelse om vi är kalibrerade
-    if (isCalibrated) {
-        const currentFrameData = ctx.getImageData(0, 0, 640, 480);
-        const currentFrame = currentFrameData.data;
-        let movements = [];
-        const step = 2;
+    // Vi läser från videons faktiska storlek (t.ex. 1920x1080)
+    const vw = video.videoWidth || 640;
+    const vh = video.videoHeight || 480;
 
-        for (let y = board.y - board.r; y < board.y + board.r; y += step) {
-            for (let x = board.x - board.r; x < board.x + board.r; x += step) {
+    const sw = vw / zoom;
+    const sh = vh / zoom;
+    const sx = (vw - sw) / 2;
+    const sy = (vh - sh) / 2;
+
+    // Rita inzoomat på vår högupplösta canvas (1280x960)
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, 1280, 960);
+    
+    if (isCalibrated) {
+        const currentFrame = ctx.getImageData(0, 0, 1280, 960).data;
+        let movements = [];
+        
+        // Vi hoppar över fler pixlar (step 4) för att orka med den högre upplösningen
+        for (let y = board.y - board.r; y < board.y + board.r; y += 4) {
+            for (let x = board.x - board.r; x < board.x + board.r; x += 4) {
                 const dx = x - board.x;
                 const dy = y - board.y;
-                
                 if (dx*dx + dy*dy < board.r*board.r) {
-                    const idx = (y * 640 + x) * 4;
+                    const idx = (y * 1280 + x) * 4;
                     const diff = Math.abs(currentFrame[idx] - refFrame[idx]);
-                    
                     if (diff > sensitivity) {
                         movements.push({x, y});
                     }
@@ -111,20 +110,15 @@ function process() {
             }
         }
 
-        if (movements.length > 40 && movements.length < 1200) {
+        if (movements.length > 20 && movements.length < 2000) {
             const avgX = movements.reduce((a, b) => a + b.x, 0) / movements.length;
             const avgY = movements.reduce((a, b) => a + b.y, 0) / movements.length;
-            
             triggerHit(avgX, avgY);
-            // Uppdatera referens direkt (din original-logik)
             refFrame = new Uint8ClampedArray(currentFrame);
         }
     }
     
-    // 3. Rita siktet sist
     drawOverlay();
-    
-    // Fortsätt loopen
     requestAnimationFrame(process);
 }
 
@@ -135,44 +129,36 @@ function calculateScore(x, y) {
     const pct = dist / board.r;
 
     if (pct > 1.0) return "MISS";
-    if (pct < 0.03) return "BULL (50)";
-    if (pct < 0.07) return "BULL (25)";
+    if (pct < 0.035) return "BULL (50)";
+    if (pct < 0.08) return "BULL (25)";
 
     const segments = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
     let angle = Math.atan2(dy, dx) * (180 / Math.PI);
     angle = (angle + 90 + 9) % 360;
     if (angle < 0) angle += 360;
-    
     const segmentIdx = Math.floor(angle / 18);
     const baseScore = segments[segmentIdx];
 
     if (pct > 0.92) return `D${baseScore}`;
     if (pct > 0.55 && pct < 0.62) return `T${baseScore}`;
-    
     return baseScore.toString();
 }
 
 function triggerHit(x, y) {
-    const score = calculateScore(x, y);
-    hitEl.innerText = "TRÄFF: " + score;
-    log(`Träff: ${score} (${Math.round(x)},${Math.round(y)})`);
+    hitEl.innerText = "TRÄFF: " + calculateScore(x, y);
 }
 
 function drawOverlay() {
-    ctx.lineWidth = 2;
-    // Ytterring
-    ctx.strokeStyle = "rgba(0, 255, 0, 0.4)";
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "rgba(0, 255, 0, 0.3)";
     ctx.beginPath();
     ctx.arc(board.x, board.y, board.r, 0, Math.PI * 2);
-    ctx.arc(board.x, board.y, board.r * 0.92, 0, Math.PI * 2);
     ctx.stroke();
-    
-    // Trippelring
-    ctx.strokeStyle = "rgba(255, 0, 0, 0.3)";
+    // Mitten-prick för sikte
+    ctx.fillStyle = "red";
     ctx.beginPath();
-    ctx.arc(board.x, board.y, board.r * 0.62, 0, Math.PI * 2);
-    ctx.arc(board.x, board.y, board.r * 0.55, 0, Math.PI * 2);
-    ctx.stroke();
+    ctx.arc(board.x, board.y, 5, 0, Math.PI*2);
+    ctx.fill();
 }
 </script>
 </body>
