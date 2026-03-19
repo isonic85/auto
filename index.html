@@ -134,7 +134,7 @@
       background: var(--gray);
     }
 
-    .hint {
+    .hint, .debug {
       font-size: 0.78rem;
       color: var(--muted);
       text-align: center;
@@ -165,6 +165,7 @@
     </div>
 
     <div class="hint">Flytta ringarna till ytterkant: 20, 6, 3, 11</div>
+    <div class="debug" id="debug-el">debug: -</div>
   </div>
 
   <script>
@@ -173,6 +174,7 @@
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
     const hitEl = document.getElementById('hit-display');
+    const debugEl = document.getElementById('debug-el');
     const zoomSlider = document.getElementById('zoom-slider');
     const zoomLabel = document.getElementById('zoom-label');
     const resetBtn = document.getElementById('reset-btn');
@@ -190,14 +192,15 @@
     let activePointerId = null;
     let lastPointerPosCanvas = null;
     let lastTip = null;
+    let lastMotionCluster = null;
 
     let lastDetectionTime = 0;
-    const detectionCooldownMs = 900;
+    const detectionCooldownMs = 650;
 
     let waitingForBoardToSettle = false;
     let stableFrameCount = 0;
-    const stableFramesNeeded = 6;
-    const settleMotionThreshold = 120;
+    const stableFramesNeeded = 8;
+    const settleMotionThreshold = 45;
 
     const HANDLE_RADIUS_CANVAS = 34;
     const HANDLE_HIT_RADIUS_SCREEN = 56;
@@ -215,6 +218,10 @@
       if (type === 'ok') hitEl.classList.add('status-ok');
       if (type === 'warn') hitEl.classList.add('status-warn');
       if (type === 'bad') hitEl.classList.add('status-bad');
+    }
+
+    function setDebug(text) {
+      debugEl.textContent = text;
     }
 
     async function startCamera() {
@@ -287,12 +294,14 @@
       clearCalibration();
       stopDragging();
       setStatus('VÄNTAR...', 'warn');
+      setDebug('debug: reset');
     }
 
     function clearCalibration() {
       isCalibrated = false;
       refFrame = null;
       lastTip = null;
+      lastMotionCluster = null;
       waitingForBoardToSettle = false;
       stableFrameCount = 0;
     }
@@ -331,7 +340,6 @@
 
     canvas.addEventListener('pointerdown', (e) => {
       const p = findNearestPointFromEvent(e);
-
       if (!p) return;
 
       draggedPoint = p;
@@ -340,9 +348,7 @@
 
       try {
         canvas.setPointerCapture(e.pointerId);
-      } catch (err) {
-        // Ignorera om browsern inte gillar detta
-      }
+      } catch {}
 
       e.preventDefault();
     }, { passive: false });
@@ -410,8 +416,10 @@
       waitingForBoardToSettle = false;
       stableFrameCount = 0;
       lastTip = null;
+      lastMotionCluster = null;
 
       setStatus('REDO!', 'ok');
+      setDebug('debug: kalibrerad');
     }
 
     function drawVideoFrame(targetCtx, targetCanvas) {
@@ -455,17 +463,22 @@
       const radius = getBoardRadius(center);
 
       if (isFinite(center.x) && isFinite(center.y) && radius > 10 && isCalibrated && refFrame) {
-        const analysis = detectMotion(refFrame, currentFrame, canvas.width, canvas.height);
+        const analysis = detectMotion(refFrame, currentFrame, canvas.width, canvas.height, center, radius);
 
         if (!waitingForBoardToSettle) {
           const enoughTimePassed = (now - lastDetectionTime) > detectionCooldownMs;
-          const plausibleMotion = analysis.moves.length > 25 && analysis.moves.length < 2200;
+
+          setDebug(`debug: moves=${analysis.moves.length} cluster=${analysis.bestCluster ? analysis.bestCluster.length : 0}`);
+
+          const clusterSize = analysis.bestCluster ? analysis.bestCluster.length : 0;
+          const plausibleMotion = clusterSize >= 6 && clusterSize <= 400;
 
           if (enoughTimePassed && plausibleMotion) {
-            const tip = estimateTip(analysis.moves, center);
+            const tip = estimateTip(analysis.bestCluster, center);
 
             if (tip && isLikelyOnBoard(tip, center, radius)) {
               lastTip = tip;
+              lastMotionCluster = analysis.bestCluster;
               setStatus(calculateScore(tip, center, radius), 'ok');
               lastDetectionTime = now;
               waitingForBoardToSettle = true;
@@ -473,7 +486,7 @@
             }
           }
         } else {
-          const movementNow = analysis.moves.length;
+          const movementNow = analysis.bestCluster ? analysis.bestCluster.length : 0;
           const isStable = movementNow < settleMotionThreshold;
 
           if (isStable) {
@@ -482,10 +495,13 @@
             stableFrameCount = 0;
           }
 
+          setDebug(`debug: settle cluster=${movementNow} stable=${stableFrameCount}/${stableFramesNeeded}`);
+
           if (stableFrameCount >= stableFramesNeeded) {
             refFrame = new Uint8ClampedArray(currentFrame);
             waitingForBoardToSettle = false;
             stableFrameCount = 0;
+            lastMotionCluster = null;
           }
         }
       }
@@ -494,13 +510,20 @@
       requestAnimationFrame(process);
     }
 
-    function detectMotion(referenceFrame, currentFrame, w, h) {
+    function detectMotion(referenceFrame, currentFrame, w, h, center, radius) {
       const moves = [];
-      const step = 4;
-      const margin = 80;
+      const step = 2;
+      const searchRadius = radius * 1.18;
+      const minX = Math.max(0, Math.floor(center.x - searchRadius));
+      const maxX = Math.min(w - 1, Math.ceil(center.x + searchRadius));
+      const minY = Math.max(0, Math.floor(center.y - searchRadius));
+      const maxY = Math.min(h - 1, Math.ceil(center.y + searchRadius));
 
-      for (let y = margin; y < h - margin; y += step) {
-        for (let x = margin; x < w - margin; x += step) {
+      for (let y = minY; y <= maxY; y += step) {
+        for (let x = minX; x <= maxX; x += step) {
+          const distToCenter = Math.hypot(x - center.x, y - center.y);
+          if (distToCenter > searchRadius) continue;
+
           const i = (y * w + x) * 4;
 
           const dr = Math.abs(referenceFrame[i] - currentFrame[i]);
@@ -509,43 +532,112 @@
 
           const diff = dr + dg + db;
 
-          if (diff > 95) {
+          if (diff > 55) {
             moves.push({ x, y });
           }
         }
       }
 
-      return { moves };
+      const clusters = clusterPoints(moves, 18);
+      const bestCluster = selectBestCluster(clusters, center, radius);
+
+      return { moves, clusters, bestCluster };
     }
 
-    function estimateTip(moves, center) {
-      if (!moves || moves.length === 0) return null;
+    function clusterPoints(points, maxDist) {
+      const clusters = [];
+      const used = new Array(points.length).fill(false);
 
-      let avgX = 0;
-      let avgY = 0;
+      for (let i = 0; i < points.length; i++) {
+        if (used[i]) continue;
 
-      for (const m of moves) {
-        avgX += m.x;
-        avgY += m.y;
+        const cluster = [];
+        const queue = [i];
+        used[i] = true;
+
+        while (queue.length) {
+          const idx = queue.pop();
+          const p = points[idx];
+          cluster.push(p);
+
+          for (let j = 0; j < points.length; j++) {
+            if (used[j]) continue;
+            const q = points[j];
+            if (Math.hypot(p.x - q.x, p.y - q.y) <= maxDist) {
+              used[j] = true;
+              queue.push(j);
+            }
+          }
+        }
+
+        clusters.push(cluster);
       }
 
-      avgX /= moves.length;
-      avgY /= moves.length;
+      return clusters;
+    }
 
-      const vx = center.x - avgX;
-      const vy = center.y - avgY;
+    function selectBestCluster(clusters, center, radius) {
+      if (!clusters.length) return null;
+
+      let best = null;
+      let bestScore = -Infinity;
+
+      for (const cluster of clusters) {
+        if (cluster.length < 4) continue;
+
+        const c = getClusterCenter(cluster);
+        const dist = Math.hypot(c.x - center.x, c.y - center.y);
+
+        if (dist > radius * 1.1) continue;
+
+        const spread = getClusterSpread(cluster, c);
+        const score = cluster.length * 3 - spread * 0.4 - dist * 0.02;
+
+        if (score > bestScore) {
+          bestScore = score;
+          best = cluster;
+        }
+      }
+
+      return best;
+    }
+
+    function getClusterCenter(cluster) {
+      let x = 0;
+      let y = 0;
+      for (const p of cluster) {
+        x += p.x;
+        y += p.y;
+      }
+      return { x: x / cluster.length, y: y / cluster.length };
+    }
+
+    function getClusterSpread(cluster, c) {
+      let s = 0;
+      for (const p of cluster) {
+        s += Math.hypot(p.x - c.x, p.y - c.y);
+      }
+      return s / cluster.length;
+    }
+
+    function estimateTip(cluster, center) {
+      if (!cluster || cluster.length === 0) return null;
+
+      const clusterCenter = getClusterCenter(cluster);
+
+      const vx = center.x - clusterCenter.x;
+      const vy = center.y - clusterCenter.y;
       const mag = Math.hypot(vx, vy);
-
       if (mag < 1) return null;
 
       let bestTip = null;
       let bestProj = -Infinity;
 
-      for (const m of moves) {
-        const proj = ((m.x - avgX) * vx / mag) + ((m.y - avgY) * vy / mag);
+      for (const p of cluster) {
+        const proj = ((p.x - clusterCenter.x) * vx / mag) + ((p.y - clusterCenter.y) * vy / mag);
         if (proj > bestProj) {
           bestProj = proj;
-          bestTip = m;
+          bestTip = p;
         }
       }
 
@@ -638,6 +730,15 @@
       ctx.beginPath();
       ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
       ctx.stroke();
+
+      if (lastMotionCluster && lastMotionCluster.length) {
+        ctx.fillStyle = 'rgba(0, 210, 255, 0.35)';
+        for (const p of lastMotionCluster) {
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
 
       for (const p of points) {
         ctx.fillStyle = p.color;
