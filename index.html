@@ -1,417 +1,689 @@
 <!DOCTYPE html>
 <html lang="sv">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>DeepDart Pro - Precision Edition</title>
-    <style>
-        body {
-            background: #121212;
-            color: white;
-            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-            margin: 0;
-            overflow: hidden;
-            touch-action: none;
-        }
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>DeepDart Pro - Precision Edition</title>
+  <style>
+    :root {
+      --bg: #121212;
+      --panel: #1c1c1e;
+      --panel2: #2c2c2e;
+      --line: #38383a;
+      --text: #ffffff;
+      --muted: #8e8e93;
+      --green: #32d74b;
+      --orange: #ff9500;
+      --gray: #48484a;
+      --blue: #0a84ff;
+    }
 
-        .container {
-            position: relative;
-            width: 100vw;
-            height: 60vh;
-            background: #000;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            overflow: hidden;
-        }
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
 
-        canvas {
-            max-width: 100%;
-            max-height: 100%;
-            object-fit: contain;
-            touch-action: none;
-            display: block;
-        }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      margin: 0;
+      overflow: hidden;
+      touch-action: none;
+    }
 
-        video {
-            position: absolute;
-            opacity: 0;
-            pointer-events: none;
-        }
+    .container {
+      position: relative;
+      width: 100vw;
+      height: 60vh;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
 
-        #ui {
-            background: #1c1c1e;
-            height: 40vh;
-            padding: 15px;
-            border-top: 1px solid #38383a;
-            box-sizing: border-box;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
+    canvas {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+      touch-action: none;
+    }
 
-        .slider-wrap {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            background: #2c2c2e;
-            padding: 10px;
-            border-radius: 12px;
-        }
+    video {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+      width: 1px;
+      height: 1px;
+    }
 
-        input[type=range] {
-            flex-grow: 1;
-            height: 30px;
-            accent-color: #0a84ff;
-        }
+    #ui {
+      background: var(--panel);
+      height: 40vh;
+      padding: 15px;
+      border-top: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
 
-        #hit-display {
-            color: #32d74b;
-            font-size: 2.2rem;
-            font-weight: 900;
-            text-align: center;
-            margin: 2px 0;
-        }
+    .slider-wrap {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--panel2);
+      padding: 10px;
+      border-radius: 12px;
+    }
 
-        .btn-row {
-            display: flex;
-            gap: 10px;
-        }
+    input[type=range] {
+      flex-grow: 1;
+      height: 30px;
+      accent-color: var(--blue);
+    }
 
-        .btn {
-            flex: 2;
-            padding: 16px;
-            background: #ff9500;
-            border: none;
-            color: white;
-            border-radius: 14px;
-            font-weight: bold;
-            font-size: 1.1rem;
-        }
+    #hit-display {
+      color: var(--green);
+      font-size: 2.1rem;
+      font-weight: 900;
+      text-align: center;
+      margin: 2px 0;
+      min-height: 2.6rem;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
 
-        .btn-reset {
-            flex: 1;
-            background: #48484a;
-        }
+    .btn-row {
+      display: flex;
+      gap: 10px;
+    }
 
-        .hint {
-            font-size: 0.75rem;
-            color: #8e8e93;
-            text-align: center;
-        }
-    </style>
+    .btn {
+      flex: 2;
+      padding: 16px;
+      background: var(--orange);
+      border: none;
+      color: white;
+      border-radius: 14px;
+      font-weight: bold;
+      font-size: 1.05rem;
+      cursor: pointer;
+    }
+
+    .btn:active {
+      transform: scale(0.99);
+    }
+
+    .btn-reset {
+      flex: 1;
+      background: var(--gray);
+    }
+
+    .hint {
+      font-size: 0.78rem;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .status-ok { color: var(--green); }
+    .status-warn { color: #ffd60a; }
+    .status-bad { color: #ff453a; }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <video id="v" autoplay playsinline muted></video>
-        <canvas id="c"></canvas>
+  <div class="container">
+    <video id="v" autoplay playsinline muted></video>
+    <canvas id="c"></canvas>
+  </div>
+
+  <div id="ui">
+    <div class="slider-wrap">
+      <span id="zoom-label" style="font-weight:600; min-width:85px;">ZOOM: 1.0x</span>
+      <input type="range" id="zoom-slider" min="1" max="5" step="0.1" value="1" />
     </div>
 
-    <div id="ui">
-        <div class="slider-wrap">
-            <span id="zoom-label" style="font-weight:600; min-width:85px;">ZOOM: 1.0x</span>
-            <input type="range" id="zoom-slider" min="1" max="5" step="0.1" value="1" />
-        </div>
+    <div id="hit-display">VÄNTAR...</div>
 
-        <div id="hit-display">VÄNTAR...</div>
-
-        <div class="btn-row">
-            <button class="btn btn-reset" onclick="resetPoints()">RESET</button>
-            <button class="btn" onclick="captureReference()">KALIBRERA</button>
-        </div>
-
-        <div class="hint">Flytta ringarna till ytterkant: 20, 6, 3, 11</div>
+    <div class="btn-row">
+      <button class="btn btn-reset" id="reset-btn">RESET</button>
+      <button class="btn" id="cal-btn">KALIBRERA</button>
     </div>
 
-<script>
-const video = document.getElementById('v');
-const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d', { willReadFrequently: true });
-const hitEl = document.getElementById('hit-display');
-const zoomSlider = document.getElementById('zoom-slider');
-const zoomLabel = document.getElementById('zoom-label');
+    <div class="hint">Flytta ringarna till ytterkant: 20, 6, 3, 11</div>
+  </div>
 
-const offscreenCanvas = document.createElement('canvas');
-const offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
+  <script>
+    const video = document.getElementById('v');
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-let refFrame = null;
-let isCalibrated = false;
-let videoTrack = null;
-let supportsHardwareZoom = false;
-let lastTip = null;
-let lastTouchPos = null;
-let draggedPoint = null;
+    const hitEl = document.getElementById('hit-display');
+    const zoomSlider = document.getElementById('zoom-slider');
+    const zoomLabel = document.getElementById('zoom-label');
+    const resetBtn = document.getElementById('reset-btn');
+    const calBtn = document.getElementById('cal-btn');
 
-let lastDetectionTime = 0;
-let detectionCooldownMs = 1200;
-let stableFramesAfterHit = 0;
-let waitingForBoardToSettle = false;
+    const offscreenCanvas = document.createElement('canvas');
+    const offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
 
-let points = [
-    { x: 0, y: 0, color: '#ff3b30', label: '20' },
-    { x: 0, y: 0, color: '#007aff', label: '6' },
-    { x: 0, y: 0, color: '#ffcc00', label: '3' },
-    { x: 0, y: 0, color: '#34c759', label: '11' }
-];
+    let refFrame = null;
+    let isCalibrated = false;
+    let videoTrack = null;
+    let supportsHardwareZoom = false;
 
-startCamera();
+    let draggedPoint = null;
+    let activePointerId = null;
+    let lastPointerPos = null;
+    let lastTip = null;
 
-async function startCamera() {
-    try {
+    let lastDetectionTime = 0;
+    const detectionCooldownMs = 900;
+
+    let waitingForBoardToSettle = false;
+    let stableFrameCount = 0;
+    const stableFramesNeeded = 6;
+    const settleMotionThreshold = 120;
+
+    let prevMovementCount = 0;
+
+    const points = [
+      { x: 0, y: 0, color: '#ff3b30', label: '20' },
+      { x: 0, y: 0, color: '#007aff', label: '6'  },
+      { x: 0, y: 0, color: '#ffcc00', label: '3'  },
+      { x: 0, y: 0, color: '#34c759', label: '11' }
+    ];
+
+    function setStatus(text, type = 'ok') {
+      hitEl.textContent = text;
+      hitEl.className = '';
+      if (type === 'ok') hitEl.classList.add('status-ok');
+      if (type === 'warn') hitEl.classList.add('status-warn');
+      if (type === 'bad') hitEl.classList.add('status-bad');
+    }
+
+    async function startCamera() {
+      try {
         const stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-                width: { ideal: 1920 },
-                height: { ideal: 1080 },
-                facingMode: { ideal: "environment" }
-            },
-            audio: false
+          video: {
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            facingMode: { ideal: 'environment' }
+          },
+          audio: false
         });
 
         video.srcObject = stream;
         videoTrack = stream.getVideoTracks()[0];
 
-        const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+        const caps = typeof videoTrack.getCapabilities === 'function'
+          ? videoTrack.getCapabilities()
+          : {};
+
         if (caps.zoom) {
-            supportsHardwareZoom = true;
-            zoomSlider.min = caps.zoom.min;
-            zoomSlider.max = caps.zoom.max;
-            zoomSlider.step = caps.zoom.step || 0.1;
-            zoomSlider.value = Math.max(caps.zoom.min, 1);
+          supportsHardwareZoom = true;
+          zoomSlider.min = String(caps.zoom.min);
+          zoomSlider.max = String(caps.zoom.max);
+          zoomSlider.step = String(caps.zoom.step || 0.1);
+          zoomSlider.value = String(Math.max(caps.zoom.min, 1));
+        } else {
+          zoomSlider.min = '1';
+          zoomSlider.max = '5';
+          zoomSlider.step = '0.1';
+          zoomSlider.value = '1';
         }
 
         video.onloadedmetadata = () => {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            offscreenCanvas.width = video.videoWidth;
-            offscreenCanvas.height = video.videoHeight;
-
-            resetPoints();
-            video.play();
-            requestAnimationFrame(process);
+          resizeInternalCanvases(video.videoWidth, video.videoHeight);
+          resetPoints();
+          video.play();
+          requestAnimationFrame(process);
         };
-    } catch (err) {
+      } catch (err) {
         console.error(err);
-        hitEl.innerText = "KAMERA FEL";
+        setStatus('KAMERA FEL', 'bad');
+      }
     }
-}
 
-function resetPoints() {
-    const w = canvas.width || 1280;
-    const h = canvas.height || 720;
-    const size = Math.min(w, h) * 0.25;
+    function resizeInternalCanvases(w, h) {
+      canvas.width = w;
+      canvas.height = h;
+      offscreenCanvas.width = w;
+      offscreenCanvas.height = h;
+    }
 
-    points[0].x = w / 2;
-    points[0].y = h / 2 - size;
-    points[1].x = w / 2 + size;
-    points[1].y = h / 2;
-    points[2].x = w / 2;
-    points[2].y = h / 2 + size;
-    points[3].x = w / 2 - size;
-    points[3].y = h / 2;
+    function resetPoints() {
+      const w = canvas.width || 1280;
+      const h = canvas.height || 720;
+      const size = Math.min(w, h) * 0.30;
 
-    isCalibrated = false;
-    refFrame = null;
-    lastTip = null;
-    hitEl.innerText = "VÄNTAR...";
-}
+      points[0].x = w / 2;
+      points[0].y = h / 2 - size;
 
-function getPointerPos(e) {
-    const rect = canvas.getBoundingClientRect();
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      points[1].x = w / 2 + size;
+      points[1].y = h / 2;
 
-    return {
-        x: (clientX - rect.left) * (canvas.width / rect.width),
-        y: (clientY - rect.top) * (canvas.height / rect.height)
-    };
-}
+      points[2].x = w / 2;
+      points[2].y = h / 2 + size;
 
-canvas.addEventListener('touchstart', (e) => {
-    const pos = getPointerPos(e);
-    let best = null;
-    let bestDist = Infinity;
-    for (const p of points) {
+      points[3].x = w / 2 - size;
+      points[3].y = h / 2;
+
+      clearCalibration();
+      setStatus('VÄNTAR...', 'warn');
+    }
+
+    function clearCalibration() {
+      isCalibrated = false;
+      refFrame = null;
+      lastTip = null;
+      waitingForBoardToSettle = false;
+      stableFrameCount = 0;
+      prevMovementCount = 0;
+    }
+
+    function getPointerPos(e) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: (e.clientX - rect.left) * (canvas.width / rect.width),
+        y: (e.clientY - rect.top) * (canvas.height / rect.height)
+      };
+    }
+
+    function findNearestPoint(pos, maxDist = 90) {
+      let best = null;
+      let bestDist = Infinity;
+
+      for (const p of points) {
         const d = Math.hypot(p.x - pos.x, p.y - pos.y);
-        if (d < 90 && d < bestDist) {
-            best = p;
-            bestDist = d;
+        if (d < maxDist && d < bestDist) {
+          best = p;
+          bestDist = d;
         }
+      }
+
+      return best;
     }
-    draggedPoint = best;
-    if (draggedPoint) {
-        lastTouchPos = pos;
-        e.preventDefault();
+
+    canvas.addEventListener('pointerdown', (e) => {
+      const pos = getPointerPos(e);
+      const p = findNearestPoint(pos);
+
+      if (!p) return;
+
+      draggedPoint = p;
+      activePointerId = e.pointerId;
+      lastPointerPos = pos;
+
+      canvas.setPointerCapture?.(e.pointerId);
+      e.preventDefault();
+    });
+
+    window.addEventListener('pointermove', (e) => {
+      if (!draggedPoint || e.pointerId !== activePointerId) return;
+
+      const pos = getPointerPos(e);
+      draggedPoint.x = clamp(pos.x, 0, canvas.width);
+      draggedPoint.y = clamp(pos.y, 0, canvas.height);
+      lastPointerPos = pos;
+
+      clearCalibration();
+      setStatus('FLYTTA KLART → KALIBRERA', 'warn');
+      e.preventDefault();
+    }, { passive: false });
+
+    function stopDragging(e) {
+      if (e && activePointerId !== null && e.pointerId !== activePointerId) return;
+      draggedPoint = null;
+      activePointerId = null;
+      lastPointerPos = null;
     }
-}, { passive: false });
 
-window.addEventListener('touchmove', (e) => {
-    if (!draggedPoint) return;
-    const pos = getPointerPos(e);
-    // Fix: Ingen offset längre eftersom vi har förstoringsglas
-    draggedPoint.x = pos.x;
-    draggedPoint.y = pos.y;
-    lastTouchPos = pos;
-    isCalibrated = false;
-    refFrame = null;
-    e.preventDefault();
-}, { passive: false });
+    window.addEventListener('pointerup', stopDragging);
+    window.addEventListener('pointercancel', stopDragging);
 
-window.addEventListener('touchend', () => { draggedPoint = null; lastTouchPos = null; });
+    zoomSlider.addEventListener('input', async () => {
+      const val = parseFloat(zoomSlider.value);
+      zoomLabel.textContent = `ZOOM: ${val.toFixed(1)}x`;
 
-zoomSlider.oninput = async () => {
-    const val = parseFloat(zoomSlider.value);
-    zoomLabel.innerText = `ZOOM: ${val.toFixed(1)}x`;
-    if (supportsHardwareZoom && videoTrack) {
-        await videoTrack.applyConstraints({ advanced: [{ zoom: val }] });
+      if (supportsHardwareZoom && videoTrack) {
+        try {
+          await videoTrack.applyConstraints({
+            advanced: [{ zoom: val }]
+          });
+        } catch (err) {
+          console.warn('Zoom applyConstraints misslyckades:', err);
+        }
+      }
+
+      clearCalibration();
+      setStatus('ZOOM ÄNDRAD → KALIBRERA', 'warn');
+    });
+
+    resetBtn.addEventListener('click', resetPoints);
+    calBtn.addEventListener('click', captureReference);
+
+    function captureReference() {
+      if (!canvas.width || !canvas.height) return;
+
+      drawVideoFrame(offscreenCtx, offscreenCanvas);
+
+      const img = offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+      refFrame = new Uint8ClampedArray(img.data);
+      isCalibrated = true;
+      waitingForBoardToSettle = false;
+      stableFrameCount = 0;
+      prevMovementCount = 0;
+      lastTip = null;
+
+      setStatus('REDO!', 'ok');
     }
-    isCalibrated = false;
-    refFrame = null;
-};
 
-function captureReference() {
-    if (!canvas.width) return;
-    drawVideoFrame(offscreenCtx, offscreenCanvas);
-    refFrame = new Uint8ClampedArray(offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height).data);
-    isCalibrated = true;
-    lastTip = null;
-    hitEl.innerText = "REDO!";
-}
+    function drawVideoFrame(targetCtx, targetCanvas) {
+      if (!video.videoWidth || !video.videoHeight) return;
 
-function drawVideoFrame(targetCtx, targetCanvas) {
-    if (supportsHardwareZoom) {
+      targetCtx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+
+      if (supportsHardwareZoom) {
         targetCtx.drawImage(video, 0, 0, targetCanvas.width, targetCanvas.height);
-    } else {
-        const z = parseFloat(zoomSlider.value);
-        const sw = video.videoWidth / z;
-        const sh = video.videoHeight / z;
-        targetCtx.drawImage(video, (video.videoWidth - sw) / 2, (video.videoHeight - sh) / 2, sw, sh, 0, 0, targetCanvas.width, targetCanvas.height);
+        return;
+      }
+
+      const z = parseFloat(zoomSlider.value);
+      const sw = video.videoWidth / z;
+      const sh = video.videoHeight / z;
+      const sx = (video.videoWidth - sw) / 2;
+      const sy = (video.videoHeight - sh) / 2;
+
+      targetCtx.drawImage(
+        video,
+        sx, sy, sw, sh,
+        0, 0, targetCanvas.width, targetCanvas.height
+      );
     }
-}
 
-function process() {
-    if (!video.videoWidth) { requestAnimationFrame(process); return; }
-    drawVideoFrame(offscreenCtx, offscreenCanvas);
-    const currentFrame = offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height).data;
-    ctx.drawImage(offscreenCanvas, 0, 0, canvas.width, canvas.height);
+    function process(now = performance.now()) {
+      if (!video.videoWidth || !video.videoHeight) {
+        requestAnimationFrame(process);
+        return;
+      }
 
-    if (isCalibrated && refFrame) {
-        const now = performance.now();
-        if ((now - lastDetectionTime) > detectionCooldownMs && !waitingForBoardToSettle) {
-            const moves = [];
-            for (let y = 80; y < canvas.height - 80; y += 4) { // Tätare sökning (4 istället för 6)
-                for (let x = 80; x < canvas.width - 80; x += 4) {
-                    const i = (y * canvas.width + x) * 4;
-                    const diff = Math.abs(refFrame[i] - currentFrame[i]) + Math.abs(refFrame[i+1] - currentFrame[i+1]) + Math.abs(refFrame[i+2] - currentFrame[i+2]);
-                    if (diff > 100) moves.push({ x, y });
-                }
-            }
+      drawVideoFrame(offscreenCtx, offscreenCanvas);
 
-            if (moves.length > 20 && moves.length < 1500) {
-                const center = getBoardCenter();
-                const tip = estimateTip(moves, center);
-                if (tip && isLikelyOnBoard(tip, center)) {
-                    lastTip = tip;
-                    hitEl.innerText = calculateScore(tip, center);
-                    lastDetectionTime = now;
-                    waitingForBoardToSettle = true;
-                }
+      const frame = offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+      const currentFrame = frame.data;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(offscreenCanvas, 0, 0, canvas.width, canvas.height);
+
+      const center = getBoardCenter();
+      const radius = getBoardRadius(center);
+
+      if (isFinite(center.x) && isFinite(center.y) && radius > 10 && isCalibrated && refFrame) {
+        const analysis = detectMotion(refFrame, currentFrame, canvas.width, canvas.height);
+
+        if (!waitingForBoardToSettle) {
+          const enoughTimePassed = (now - lastDetectionTime) > detectionCooldownMs;
+          const plausibleMotion = analysis.moves.length > 25 && analysis.moves.length < 2200;
+
+          if (enoughTimePassed && plausibleMotion) {
+            const tip = estimateTip(analysis.moves, center);
+
+            if (tip && isLikelyOnBoard(tip, center, radius)) {
+              lastTip = tip;
+              setStatus(calculateScore(tip, center, radius), 'ok');
+              lastDetectionTime = now;
+              waitingForBoardToSettle = true;
+              stableFrameCount = 0;
             }
-        } else if (waitingForBoardToSettle) {
-            stableFramesAfterHit++;
-            if (stableFramesAfterHit > 10) {
-                refFrame = new Uint8ClampedArray(currentFrame);
-                waitingForBoardToSettle = false;
-                stableFramesAfterHit = 0;
-            }
+          }
+        } else {
+          const movementNow = analysis.moves.length;
+          const isStable = movementNow < settleMotionThreshold;
+
+          if (isStable) {
+            stableFrameCount++;
+          } else {
+            stableFrameCount = 0;
+          }
+
+          if (stableFrameCount >= stableFramesNeeded) {
+            refFrame = new Uint8ClampedArray(currentFrame);
+            waitingForBoardToSettle = false;
+            stableFrameCount = 0;
+          }
         }
-    }
-    drawOverlay();
-    requestAnimationFrame(process);
-}
 
-function estimateTip(moves, center) {
-    let avgX = 0, avgY = 0;
-    moves.forEach(m => { avgX += m.x; avgY += m.y; });
-    avgX /= moves.length; avgY /= moves.length;
-    const vx = center.x - avgX, vy = center.y - avgY;
-    const mag = Math.hypot(vx, vy);
-    let bestTip = null, bestProj = -Infinity;
-    moves.forEach(m => {
+        prevMovementCount = analysis.moves.length;
+      }
+
+      drawOverlay(center, radius);
+      requestAnimationFrame(process);
+    }
+
+    function detectMotion(referenceFrame, currentFrame, w, h) {
+      const moves = [];
+      const step = 4;
+      const margin = 80;
+
+      for (let y = margin; y < h - margin; y += step) {
+        for (let x = margin; x < w - margin; x += step) {
+          const i = (y * w + x) * 4;
+
+          const dr = Math.abs(referenceFrame[i] - currentFrame[i]);
+          const dg = Math.abs(referenceFrame[i + 1] - currentFrame[i + 1]);
+          const db = Math.abs(referenceFrame[i + 2] - currentFrame[i + 2]);
+
+          const diff = dr + dg + db;
+
+          if (diff > 95) {
+            moves.push({ x, y });
+          }
+        }
+      }
+
+      return { moves };
+    }
+
+    function estimateTip(moves, center) {
+      if (!moves || moves.length === 0) return null;
+
+      let avgX = 0;
+      let avgY = 0;
+
+      for (const m of moves) {
+        avgX += m.x;
+        avgY += m.y;
+      }
+
+      avgX /= moves.length;
+      avgY /= moves.length;
+
+      const vx = center.x - avgX;
+      const vy = center.y - avgY;
+      const mag = Math.hypot(vx, vy);
+
+      if (mag < 1) return null;
+
+      let bestTip = null;
+      let bestProj = -Infinity;
+
+      for (const m of moves) {
         const proj = ((m.x - avgX) * vx / mag) + ((m.y - avgY) * vy / mag);
-        if (proj > bestProj) { bestProj = proj; bestTip = m; }
-    });
-    return bestTip;
-}
+        if (proj > bestProj) {
+          bestProj = proj;
+          bestTip = m;
+        }
+      }
 
-function getBoardCenter() { return getLineIntersection(points[0], points[2], points[1], points[3]); }
-function getBoardRadius(center) { 
-    return (Math.hypot(points[0].x - center.x, points[0].y - center.y) + 
-            Math.hypot(points[1].x - center.x, points[1].y - center.y)) / 2; 
-}
-function isLikelyOnBoard(tip, center) { return Math.hypot(tip.x - center.x, tip.y - center.y) <= getBoardRadius(center) * 1.1; }
+      return bestTip;
+    }
 
-function getLineIntersection(p1, p2, p3, p4) {
-    const d = (p4.y - p3.y) * (p2.x - p1.x) - (p4.x - p3.x) * (p2.y - p1.y);
-    const ua = ((p4.x - p3.x) * (p1.y - p3.y) - (p4.y - p3.y) * (p1.x - p3.x)) / d;
-    return { x: p1.x + ua * (p2.x - p1.x), y: p1.y + ua * (p2.y - p1.y) };
-}
+    function getBoardCenter() {
+      return getLineIntersection(points[0], points[2], points[1], points[3]);
+    }
 
-function calculateScore(tip, center) {
-    const dx = tip.x - center.x, dy = tip.y - center.y;
-    // MATEMATISK FIX: +90 flyttar 0 till toppen, +9 centrerar 20-segmentet
-    let ang = (Math.atan2(dy, dx) * 180 / Math.PI) + 90 + 9;
-    while (ang < 0) ang += 360;
-    ang %= 360;
+    function getBoardRadius(center) {
+      if (!isFinite(center.x) || !isFinite(center.y)) return 0;
 
-    const r = getBoardRadius(center);
-    const pct = Math.hypot(dx, dy) / r;
+      const r1 = Math.hypot(points[0].x - center.x, points[0].y - center.y);
+      const r2 = Math.hypot(points[1].x - center.x, points[1].y - center.y);
+      const r3 = Math.hypot(points[2].x - center.x, points[2].y - center.y);
+      const r4 = Math.hypot(points[3].x - center.x, points[3].y - center.y);
 
-    if (pct > 1.05) return "MISS";
-    if (pct < 0.04) return "BULL (50)";
-    if (pct < 0.09) return "BULL (25)";
+      return (r1 + r2 + r3 + r4) / 4;
+    }
 
-    const segs = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
-    const base = segs[Math.floor(ang / 18)];
+    function isLikelyOnBoard(tip, center, radius) {
+      return Math.hypot(tip.x - center.x, tip.y - center.y) <= radius * 1.08;
+    }
 
-    if (pct > 0.92) return "D" + base;
-    if (pct > 0.55 && pct < 0.64) return "T" + base;
-    return String(base);
-}
+    function getLineIntersection(p1, p2, p3, p4) {
+      const d = (p4.y - p3.y) * (p2.x - p1.x) - (p4.x - p3.x) * (p2.y - p1.y);
 
-function drawOverlay() {
-    const center = getBoardCenter();
-    const radius = getBoardRadius(center);
+      if (Math.abs(d) < 0.0001) {
+        return {
+          x: (p1.x + p2.x + p3.x + p4.x) / 4,
+          y: (p1.y + p2.y + p3.y + p4.y) / 4
+        };
+      }
 
-    ctx.strokeStyle = "rgba(255,255,255,0.2)";
-    ctx.setLineDash([5, 5]);
-    ctx.beginPath(); ctx.moveTo(points[0].x, points[0].y); ctx.lineTo(points[2].x, points[2].y); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(points[1].x, points[1].y); ctx.lineTo(points[3].x, points[3].y); ctx.stroke();
-    ctx.setLineDash([]);
+      const ua = ((p4.x - p3.x) * (p1.y - p3.y) - (p4.y - p3.y) * (p1.x - p3.x)) / d;
 
-    points.forEach(p => {
-        ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, 28, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = "white"; ctx.lineWidth = 3; ctx.stroke();
-        ctx.fillStyle = "white"; ctx.font = "bold 24px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      return {
+        x: p1.x + ua * (p2.x - p1.x),
+        y: p1.y + ua * (p2.y - p1.y)
+      };
+    }
+
+    function calculateScore(tip, center, radius) {
+      const dx = tip.x - center.x;
+      const dy = tip.y - center.y;
+
+      let ang = (Math.atan2(dy, dx) * 180 / Math.PI) + 90 + 9;
+      while (ang < 0) ang += 360;
+      ang %= 360;
+
+      const pct = Math.hypot(dx, dy) / radius;
+
+      if (pct > 1.05) return 'MISS';
+      if (pct < 0.037) return 'BULL (50)';
+      if (pct < 0.092) return 'BULL (25)';
+
+      const segs = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
+      const base = segs[Math.floor(ang / 18)];
+
+      if (pct >= 0.90 && pct <= 1.00) return 'D' + base;
+      if (pct >= 0.53 && pct <= 0.63) return 'T' + base;
+
+      return String(base);
+    }
+
+    function drawOverlay(center, radius) {
+      if (!isFinite(center.x) || !isFinite(center.y) || radius <= 0) return;
+
+      ctx.save();
+
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 6]);
+
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      ctx.lineTo(points[2].x, points[2].y);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(points[1].x, points[1].y);
+      ctx.lineTo(points[3].x, points[3].y);
+      ctx.stroke();
+
+      ctx.setLineDash([]);
+
+      ctx.strokeStyle = 'rgba(255,255,255,0.20)';
+      ctx.lineWidth = 2;
+
+      ctx.beginPath();
+      ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      for (const p of points) {
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 28, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 24px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
         ctx.fillText(p.label, p.x, p.y);
-    });
+      }
 
-    if (draggedPoint && lastTouchPos) {
-        const magSize = 200, magX = 10, magY = 10, srcSize = 100;
+      if (draggedPoint && lastPointerPos) {
+        const magSize = 200;
+        const magX = 10;
+        const magY = 10;
+        const srcSize = 100;
+
+        let sx = draggedPoint.x - srcSize / 2;
+        let sy = draggedPoint.y - srcSize / 2;
+
+        sx = clamp(sx, 0, offscreenCanvas.width - srcSize);
+        sy = clamp(sy, 0, offscreenCanvas.height - srcSize);
+
         ctx.save();
-        ctx.beginPath(); ctx.rect(magX, magY, magSize, magSize); ctx.clip();
-        ctx.drawImage(offscreenCanvas, draggedPoint.x - srcSize/2, draggedPoint.y - srcSize/2, srcSize, srcSize, magX, magY, magSize, magSize);
-        ctx.strokeStyle = draggedPoint.color; ctx.lineWidth = 4; ctx.strokeRect(magX, magY, magSize, magSize);
-        ctx.beginPath(); ctx.strokeStyle = "white"; ctx.lineWidth = 1;
-        ctx.moveTo(magX + magSize/2, magY); ctx.lineTo(magX + magSize/2, magY + magSize);
-        ctx.moveTo(magX, magY + magSize/2); ctx.lineTo(magX + magSize, magY + magSize/2); ctx.stroke();
+        ctx.beginPath();
+        ctx.rect(magX, magY, magSize, magSize);
+        ctx.clip();
+
+        ctx.drawImage(
+          offscreenCanvas,
+          sx, sy, srcSize, srcSize,
+          magX, magY, magSize, magSize
+        );
+
+        ctx.strokeStyle = draggedPoint.color;
+        ctx.lineWidth = 4;
+        ctx.strokeRect(magX, magY, magSize, magSize);
+
+        ctx.beginPath();
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 1;
+        ctx.moveTo(magX + magSize / 2, magY);
+        ctx.lineTo(magX + magSize / 2, magY + magSize);
+        ctx.moveTo(magX, magY + magSize / 2);
+        ctx.lineTo(magX + magSize, magY + magSize / 2);
+        ctx.stroke();
+
         ctx.restore();
+      }
+
+      if (lastTip) {
+        ctx.fillStyle = '#00d2ff';
+        ctx.beginPath();
+        ctx.arc(lastTip.x, lastTip.y, 10, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      ctx.restore();
     }
 
-    if (lastTip) {
-        ctx.fillStyle = "#00d2ff"; ctx.beginPath(); ctx.arc(lastTip.x, lastTip.y, 10, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = "white"; ctx.stroke();
+    function clamp(v, min, max) {
+      return Math.max(min, Math.min(max, v));
     }
-}
-</script>
+
+    startCamera();
+  </script>
 </body>
 </html>
