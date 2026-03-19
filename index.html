@@ -1,0 +1,153 @@
+!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <title>DeepDart Web Clone - AutoScorer</title>
+    <style>
+        body { background: #121212; color: white; font-family: sans-serif; text-align: center; margin: 0; }
+        .container { position: relative; display: inline-block; margin-top: 20px; }
+        canvas { position: absolute; top: 0; left: 0; pointer-events: none; }
+        #ui { background: #222; padding: 20px; border-top: 2px solid #444; position: fixed; bottom: 0; width: 100%; }
+        .log { height: 100px; overflow-y: auto; background: #000; font-family: monospace; padding: 10px; margin: 10px; border: 1px solid #444; }
+        .btn { padding: 15px 30px; font-size: 1.1rem; cursor: pointer; background: #27ae60; border: none; color: white; border-radius: 5px; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <video id="v" width="640" height="480" autoplay playsinline muted></video>
+        <canvas id="c" width="640" height="480"></canvas>
+    </div>
+
+    <div id="ui">
+        <h1 id="last-hit">VÄNTAR PÅ KAST...</h1>
+        <div class="log" id="event-log">System startat...</div>
+        <button class="btn" onclick="captureReference()">1. Kalibrera (Töm tavlan)</button>
+    </div>
+
+<script>
+const video = document.getElementById('v');
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const logEl = document.getElementById('event-log');
+const hitEl = document.getElementById('last-hit');
+
+let refFrame = null;
+let isCalibrated = false;
+
+// Inställningar (Justera dessa så de passar din kamera-vy)
+const board = { x: 320, y: 240, r: 180 };
+const sensitivity = 40; // Känslighet för rörelse
+
+navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: "environment" } })
+    .then(s => { video.srcObject = s; requestAnimationFrame(process); });
+
+function log(msg) {
+    const p = document.createElement('div');
+    p.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    logEl.prepend(p);
+}
+
+function captureReference() {
+    ctx.drawImage(video, 0, 0, 640, 480);
+    const frame = ctx.getImageData(0, 0, 640, 480);
+    refFrame = new Uint8ClampedArray(frame.data); // Kopiera datan
+    isCalibrated = true;
+    log("Tavlan kalibrerad. Kasta pilarna!");
+}
+
+function process() {
+    ctx.drawImage(video, 0, 0, 640, 480);
+   
+    if (isCalibrated) {
+        const currentFrame = ctx.getImageData(0, 0, 640, 480).data;
+        let movements = [];
+        const step = 2; // Prestanda-optimering: kolla varannan pixel
+
+        for (let y = board.y - board.r; y < board.y + board.r; y += step) {
+            for (let x = board.x - board.r; x < board.x + board.r; x += step) {
+                const dx = x - board.x;
+                const dy = y - board.y;
+               
+                // Kolla bara pixlar inom tavlans cirkel
+                if (dx*dx + dy*dy < board.r*board.r) {
+                    const idx = (y * 640 + x) * 4;
+                    // Jämför ljusstyrka (Röd kanal räcker ofta som referens)
+                    const diff = Math.abs(currentFrame[idx] - refFrame[idx]);
+                   
+                    if (diff > sensitivity) {
+                        movements.push({x, y});
+                    }
+                }
+            }
+        }
+
+        // En pil täcker vanligtvis mellan 40 och 1000 pixlar i denna upplösning
+        if (movements.length > 40 && movements.length < 1200) {
+            const avgX = movements.reduce((a, b) => a + b.x, 0) / movements.length;
+            const avgY = movements.reduce((a, b) => a + b.y, 0) / movements.length;
+           
+            triggerHit(avgX, avgY);
+            // Uppdatera referensbilden dynamiskt för att inte trigga på samma pil igen
+            refFrame = new Uint8ClampedArray(currentFrame);
+        }
+    }
+   
+    drawOverlay();
+    requestAnimationFrame(process);
+}
+
+function calculateScore(x, y) {
+    const dx = x - board.x;
+    const dy = y - board.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+   
+    // Procentuellt avstånd från mitten (0 till 1)
+    const pct = dist / board.r;
+
+    // Standardmått för darttavla
+    if (pct > 1.0) return "MISS";
+    if (pct < 0.03) return "BULL (50)"; // Inner-bull
+    if (pct < 0.07) return "BULL (25)"; // Ytter-bull
+
+    // Beräkna poängsegment
+    const segments = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
+    let angle = Math.atan2(dy, dx) * (180 / Math.PI);
+   
+    // Justera vinkeln: 20 är högst upp (-90 grader) och varje tårtbit är 18 grader
+    angle = (angle + 90 + 9) % 360;
+    if (angle < 0) angle += 360;
+   
+    const segmentIdx = Math.floor(angle / 18);
+    const baseScore = segments[segmentIdx];
+
+    // Multiplikatorer (Dubbel- och trippelringar)
+    if (pct > 0.92) return `D${baseScore}`; // Dubbelring ytterst
+    if (pct > 0.55 && pct < 0.62) return `T${baseScore}`; // Trippelring i mitten
+   
+    return baseScore.toString();
+}
+
+function triggerHit(x, y) {
+    const score = calculateScore(x, y);
+    hitEl.innerText = "TRÄFF: " + score;
+    log(`Träff detekterad: ${score} (Koord: ${Math.round(x)},${Math.round(y)})`);
+}
+
+function drawOverlay() {
+    // Ritar ut hjälplinjer för kalibrering
+    ctx.strokeStyle = "rgba(0, 255, 0, 0.4)";
+    ctx.beginPath();
+    ctx.arc(board.x, board.y, board.r, 0, Math.PI * 2); // Ytterring
+    ctx.arc(board.x, board.y, board.r * 0.92, 0, Math.PI * 2); // Dubbelring
+    ctx.stroke();
+   
+    ctx.strokeStyle = "rgba(255, 0, 0, 0.3)";
+    ctx.beginPath();
+    ctx.arc(board.x, board.y, board.r * 0.62, 0, Math.PI * 2); // Trippel yttre
+    ctx.arc(board.x, board.y, board.r * 0.55, 0, Math.PI * 2); // Trippel inre
+    ctx.stroke();
+}
+</script>
+</body>
+</html>
