@@ -41,8 +41,9 @@ const zoomSlider = document.getElementById('zoom-slider');
 
 let refFrame = null;
 let isCalibrated = false;
+let isProcessingHit = false; // Hindrar dubbla registreringar under fördröjningen
 let board = { x: 0, y: 0, r: 0 }; 
-let lastTip = null; // För att rita ut den blå pricken vid träff
+let lastTip = null;
 
 navigator.mediaDevices.getUserMedia({ 
     video: { 
@@ -55,17 +56,16 @@ navigator.mediaDevices.getUserMedia({
     video.onloadedmetadata = () => {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
-        
         board.x = canvas.width / 2;
         board.y = canvas.height / 2;
         board.r = Math.min(canvas.width, canvas.height) * 0.4;
-        
         video.play();
         requestAnimationFrame(process);
     };
 });
 
 function captureReference() {
+    ctx.drawImage(video, getSx(), getSy(), getSw(), getSh(), 0, 0, canvas.width, canvas.height);
     const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
     refFrame = new Uint8ClampedArray(frame.data);
     isCalibrated = true;
@@ -73,68 +73,85 @@ function captureReference() {
     hitEl.innerText = "REDO!";
 }
 
+// Hjälpfunktioner för zoom-koordinater
+function getSw() { return video.videoWidth / parseFloat(zoomSlider.value); }
+function getSh() { return video.videoHeight / parseFloat(zoomSlider.value); }
+function getSx() { return (video.videoWidth - getSw()) / 2; }
+function getSy() { return (video.videoHeight - getSh()) / 2; }
+
 function process() {
-    const zoom = parseFloat(zoomSlider.value);
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
-
-    const sw = vw / zoom;
-    const sh = vh / zoom;
-    const sx = (vw - sw) / 2;
-    const sy = (vh - sh) / 2;
-
-    // 1. Rita inzoomat
-    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+    // Rita alltid live-bilden
+    ctx.drawImage(video, getSx(), getSy(), getSw(), getSh(), 0, 0, canvas.width, canvas.height);
     
-    // 2. Rörelseanalys
-    if (isCalibrated) {
+    if (isCalibrated && !isProcessingHit) {
         const currentFrame = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
         let movements = [];
-        const sensitivity = 45;
+        const sensitivity = 40; // Tröskelvärde för hur mycket mörkare pixeln ska vara
         const step = 4;
 
         for (let y = Math.floor(board.y - board.r); y < board.y + board.r; y += step) {
             for (let x = Math.floor(board.x - board.r); x < board.x + board.r; x += step) {
-                const dx = x - board.x;
-                const dy = y - board.y;
+                const idx = (y * canvas.width + x) * 4;
                 
-                if (dx*dx + dy*dy < board.r*board.r) {
-                    const idx = (y * canvas.width + x) * 4;
-                    const diff = Math.abs(currentFrame[idx] - refFrame[idx]);
-                    if (diff > sensitivity) {
+                // PRECISION 1: Kolla om nya pixeln är MÖRKARE än referensen (Pilar är mörka)
+                // Vi kollar röda kanalen [idx] - det räcker oftast
+                const diff = refFrame[idx] - currentFrame[idx]; 
+                
+                if (diff > sensitivity) {
+                    const dx = x - board.x;
+                    const dy = y - board.y;
+                    if (dx*dx + dy*dy < board.r*board.r) {
                         movements.push({x, y});
                     }
                 }
             }
         }
 
-        // --- SPETSDETEKTION (Hitta punkt närmast Bullseye) ---
-        if (movements.length > 15 && movements.length < 2000) {
-            let closestDist = Infinity;
-            let tipX = 0;
-            let tipY = 0;
-
-            for (let m of movements) {
-                const dx = m.x - board.x;
-                const dy = m.y - board.y;
-                const d = dx*dx + dy*dy; 
-                
-                if (d < closestDist) {
-                    closestDist = d;
-                    tipX = m.x;
-                    tipY = m.y;
-                }
-            }
+        // Om vi hittar tillräckligt med mörka pixlar (en pil)
+        if (movements.length > 20 && movements.length < 1500) {
+            isProcessingHit = true; 
             
-            lastTip = { x: tipX, y: tipY }; // Spara för overlay
-            triggerHit(tipX, tipY);
-            refFrame = new Uint8ClampedArray(currentFrame);
+            // PRECISION 2: Vänta 150ms tills pilen slutat darra
+            setTimeout(() => {
+                analyzeStableHit(movements);
+                isProcessingHit = false;
+            }, 150);
         }
     }
     
-    // 3. Rita grafik
     drawOverlay();
     requestAnimationFrame(process);
+}
+
+function analyzeStableHit(movements) {
+    // Hämta en fräsch bild när pilen står stilla
+    const stableFrame = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    
+    let closestDist = Infinity;
+    let tipX = 0;
+    let tipY = 0;
+
+    // Hitta spetsen (punkten i rörelseområdet som är närmast bullseye)
+    for (let m of movements) {
+        const dx = m.x - board.x;
+        const dy = m.y - board.y;
+        const d = dx*dx + dy*dy; 
+        
+        if (d < closestDist) {
+            closestDist = d;
+            tipX = m.x;
+            tipY = m.y;
+        }
+    }
+    
+    if (tipX > 0) {
+        lastTip = { x: tipX, y: tipY };
+        const score = calculateScore(tipX, tipY);
+        hitEl.innerText = "TRÄFF: " + score;
+        
+        // Uppdatera referensbilden med den nya pilen inkluderad
+        refFrame = new Uint8ClampedArray(stableFrame);
+    }
 }
 
 function calculateScore(x, y) {
@@ -158,42 +175,38 @@ function calculateScore(x, y) {
     return baseScore.toString();
 }
 
-function triggerHit(x, y) {
-    const score = calculateScore(x, y);
-    hitEl.innerText = "TRÄFF: " + score;
-}
-
 function drawOverlay() {
     ctx.lineWidth = 4;
     
-    // Rita tavlans zoner
-    ctx.strokeStyle = "rgba(0, 255, 0, 0.4)";
+    // Tavla
+    ctx.strokeStyle = "rgba(0, 255, 0, 0.3)";
     ctx.beginPath();
     ctx.arc(board.x, board.y, board.r, 0, Math.PI * 2);
     ctx.arc(board.x, board.y, board.r * 0.92, 0, Math.PI * 2);
     ctx.stroke();
     
-    ctx.strokeStyle = "rgba(255, 0, 0, 0.3)";
+    // Trippel
+    ctx.strokeStyle = "rgba(255, 0, 0, 0.2)";
     ctx.beginPath();
     ctx.arc(board.x, board.y, board.r * 0.62, 0, Math.PI * 2);
     ctx.arc(board.x, board.y, board.r * 0.55, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Sikte (Mitten)
+    // Sikte
     ctx.fillStyle = "red";
     ctx.beginPath();
-    ctx.arc(board.x, board.y, 6, 0, Math.PI*2);
+    ctx.arc(board.x, board.y, 5, 0, Math.PI*2);
     ctx.fill();
 
-    // Sista träffen (Spetsen)
+    // Blå prick på pilspetsen
     if (lastTip) {
-        ctx.fillStyle = "#3498db"; // Blå färg för spetsen
-        ctx.shadowBlur = 10;
+        ctx.fillStyle = "#00d2ff";
+        ctx.shadowBlur = 15;
         ctx.shadowColor = "white";
         ctx.beginPath();
-        ctx.arc(lastTip.x, lastTip.y, 10, 0, Math.PI*2);
+        ctx.arc(lastTip.x, lastTip.y, 8, 0, Math.PI*2);
         ctx.fill();
-        ctx.shadowBlur = 0; // Återställ skugga
+        ctx.shadowBlur = 0;
     }
 }
 </script>
