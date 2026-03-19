@@ -1,76 +1,107 @@
 <!DOCTYPE html>
 <html lang="sv">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DeepDart Pro - Final Fix</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>DeepDart Pro - Precision Edition</title>
     <style>
-        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-        body { background: #121212; color: white; font-family: sans-serif; margin: 0; padding: 0; overflow: hidden; touch-action: none; }
-        
-        /* Den stabila containern från tidigare */
-        .container { 
-            position: relative; 
-            width: 100vw; 
-            height: 60vh; 
-            background: #000; 
+        body {
+            background: #121212;
+            color: white;
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            margin: 0;
+            overflow: hidden;
+            touch-action: none;
+        }
+
+        .container {
+            position: relative;
+            width: 100vw;
+            height: 60vh;
+            background: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             overflow: hidden;
         }
-        
-        /* Canvasen som täcker skärmen perfekt */
-        canvas { 
-            width: 100%; 
-            height: 100%; 
-            object-fit: contain; 
+
+        canvas {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            touch-action: none;
+            display: block;
         }
-        
-        video { position: absolute; opacity: 0; pointer-events: none; }
-        
-        #ui { 
-            background: #222; 
-            height: 40vh; 
-            padding: 15px; 
-            border-top: 2px solid #444; 
+
+        video {
+            position: absolute;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #ui {
+            background: #1c1c1e;
+            height: 40vh;
+            padding: 15px;
+            border-top: 1px solid #38383a;
+            box-sizing: border-box;
             display: flex;
             flex-direction: column;
+            gap: 8px;
+        }
+
+        .slider-wrap {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: #2c2c2e;
+            padding: 10px;
+            border-radius: 12px;
+        }
+
+        input[type=range] {
+            flex-grow: 1;
+            height: 30px;
+            accent-color: #0a84ff;
+        }
+
+        #hit-display {
+            color: #32d74b;
+            font-size: 2.2rem;
+            font-weight: 900;
+            text-align: center;
+            margin: 2px 0;
+        }
+
+        .btn-row {
+            display: flex;
             gap: 10px;
         }
 
-        .slider-wrap { 
-            display: flex; 
-            align-items: center; 
-            gap: 10px; 
-            background: #333; 
-            padding: 10px; 
-            border-radius: 8px; 
-        }
-        
-        input[type=range] { flex: 1; height: 30px; }
-
-        #hit-display { 
-            color: #2ecc71; 
-            font-size: 2.5rem; 
-            font-weight: bold; 
-            text-align: center;
-            margin: 5px 0;
-        }
-        
-        .btn-group { display: flex; gap: 10px; }
-        .btn { 
+        .btn {
             flex: 2;
-            padding: 18px; 
-            background: #e67e22; 
-            border: none; 
-            color: white; 
-            border-radius: 8px; 
-            font-weight: bold; 
-            font-size: 1.2rem;
+            padding: 16px;
+            background: #ff9500;
+            border: none;
+            color: white;
+            border-radius: 14px;
+            font-weight: bold;
+            font-size: 1.1rem;
         }
-        .btn-alt { flex: 1; background: #555; }
+
+        .btn-reset {
+            flex: 1;
+            background: #48484a;
+        }
+
+        .hint {
+            font-size: 0.75rem;
+            color: #8e8e93;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
-
     <div class="container">
         <video id="v" autoplay playsinline muted></video>
         <canvas id="c"></canvas>
@@ -78,16 +109,18 @@
 
     <div id="ui">
         <div class="slider-wrap">
-            <span id="zoom-label" style="min-width: 80px;">ZOOM: 1x</span>
-            <input type="range" id="zoom-slider" min="1" max="5" step="0.1" value="1">
+            <span id="zoom-label" style="font-weight:600; min-width:85px;">ZOOM: 1.0x</span>
+            <input type="range" id="zoom-slider" min="1" max="5" step="0.1" value="1" />
         </div>
 
         <div id="hit-display">VÄNTAR...</div>
-        
-        <div class="btn-group">
-            <button class="btn btn-alt" onclick="resetPoints()">RESET</button>
+
+        <div class="btn-row">
+            <button class="btn btn-reset" onclick="resetPoints()">RESET</button>
             <button class="btn" onclick="captureReference()">KALIBRERA</button>
         </div>
+
+        <div class="hint">Flytta ringarna till ytterkant: 20, 6, 3, 11</div>
     </div>
 
 <script>
@@ -98,182 +131,512 @@ const hitEl = document.getElementById('hit-display');
 const zoomSlider = document.getElementById('zoom-slider');
 const zoomLabel = document.getElementById('zoom-label');
 
+const offscreenCanvas = document.createElement('canvas');
+const offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
+
 let refFrame = null;
 let isCalibrated = false;
 let videoTrack = null;
 let supportsHardwareZoom = false;
 let lastTip = null;
-
-let points = [
-    { x: 0, y: 0, color: 'red', label: '20' },
-    { x: 0, y: 0, color: 'blue', label: '6' },
-    { x: 0, y: 0, color: 'yellow', label: '3' },
-    { x: 0, y: 0, color: 'green', label: '11' }
-];
+let lastTouchPos = null;
 let draggedPoint = null;
 
-navigator.mediaDevices.getUserMedia({ 
-    video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "environment" } 
-}).then(s => { 
-    video.srcObject = s;
-    videoTrack = s.getVideoTracks()[0];
-    const caps = videoTrack.getCapabilities();
-    if (caps.zoom) {
-        supportsHardwareZoom = true;
-        zoomSlider.min = caps.zoom.min;
-        zoomSlider.max = caps.zoom.max;
-        zoomSlider.step = caps.zoom.step;
-    }
-    video.onloadedmetadata = () => {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        resetPoints();
-        video.play();
-        requestAnimationFrame(process);
-    };
-});
+let lastDetectionTime = 0;
+let detectionCooldownMs = 1200;
+let stableFramesAfterHit = 0;
+let waitingForBoardToSettle = false;
 
-function resetPoints() {
-    const w = canvas.width, h = canvas.height;
-    points[0] = { x: w * 0.5, y: h * 0.2, color: 'red', label: '20' };
-    points[1] = { x: w * 0.8, y: h * 0.5, color: 'blue', label: '6' };
-    points[2] = { x: w * 0.5, y: h * 0.8, color: 'yellow', label: '3' };
-    points[3] = { x: w * 0.2, y: h * 0.5, color: 'green', label: '11' };
-    isCalibrated = false;
+let points = [
+    { x: 0, y: 0, color: '#ff3b30', label: '20' },
+    { x: 0, y: 0, color: '#007aff', label: '6' },
+    { x: 0, y: 0, color: '#ffcc00', label: '3' },
+    { x: 0, y: 0, color: '#34c759', label: '11' }
+];
+
+startCamera();
+
+async function startCamera() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                width: { ideal: 1920 },
+                height: { ideal: 1080 },
+                facingMode: { ideal: "environment" }
+            },
+            audio: false
+        });
+
+        video.srcObject = stream;
+        videoTrack = stream.getVideoTracks()[0];
+
+        const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+        if (caps.zoom) {
+            supportsHardwareZoom = true;
+            zoomSlider.min = caps.zoom.min;
+            zoomSlider.max = caps.zoom.max;
+            zoomSlider.step = caps.zoom.step || 0.1;
+            zoomSlider.value = Math.max(caps.zoom.min, 1);
+        }
+
+        video.onloadedmetadata = () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            offscreenCanvas.width = video.videoWidth;
+            offscreenCanvas.height = video.videoHeight;
+
+            resetPoints();
+            video.play();
+            requestAnimationFrame(process);
+        };
+    } catch (err) {
+        console.error(err);
+        hitEl.innerText = "KAMERA FEL";
+    }
 }
 
-// FIX: Exakt touch-mappning oavsett iPhone-modell
-function getPos(e) {
+function resetPoints() {
+    const w = canvas.width || 1280;
+    const h = canvas.height || 720;
+    const size = Math.min(w, h) * 0.25;
+
+    points[0].x = w / 2;
+    points[0].y = h / 2 - size;
+
+    points[1].x = w / 2 + size;
+    points[1].y = h / 2;
+
+    points[2].x = w / 2;
+    points[2].y = h / 2 + size;
+
+    points[3].x = w / 2 - size;
+    points[3].y = h / 2;
+
+    isCalibrated = false;
+    refFrame = null;
+    lastTip = null;
+    waitingForBoardToSettle = false;
+    stableFramesAfterHit = 0;
+    hitEl.innerText = "VÄNTAR...";
+}
+
+function getPointerPos(e) {
     const rect = canvas.getBoundingClientRect();
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-    
-    // Räkna ut var på den faktiska bilden (canvasen) man trycker
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    
+
     return {
-        x: (clientX - rect.left) * scaleX,
-        y: (clientY - rect.top) * scaleY
+        x: (clientX - rect.left) * (canvas.width / rect.width),
+        y: (clientY - rect.top) * (canvas.height / rect.height)
     };
 }
 
-canvas.addEventListener('touchstart', e => {
-    const pos = getPos(e);
-    points.forEach(p => {
-        const d = Math.sqrt((p.x - pos.x)**2 + (p.y - pos.y)**2);
-        if (d < 70) draggedPoint = p; // Stor träffyta för fingrar
-    });
-    if(draggedPoint) e.preventDefault();
-}, {passive: false});
+function pickDraggedPoint(pos) {
+    let best = null;
+    let bestDist = Infinity;
 
-window.addEventListener('touchmove', e => {
+    for (const p of points) {
+        const d = Math.hypot(p.x - pos.x, p.y - pos.y);
+        if (d < 90 && d < bestDist) {
+            best = p;
+            bestDist = d;
+        }
+    }
+    return best;
+}
+
+canvas.addEventListener('touchstart', (e) => {
+    const pos = getPointerPos(e);
+    draggedPoint = pickDraggedPoint(pos);
     if (draggedPoint) {
-        const pos = getPos(e);
-        draggedPoint.x = pos.x;
-        draggedPoint.y = pos.y;
-        isCalibrated = false;
+        lastTouchPos = pos;
         e.preventDefault();
     }
-}, {passive: false});
+}, { passive: false });
 
-window.addEventListener('touchend', () => draggedPoint = null);
+window.addEventListener('touchmove', (e) => {
+    if (!draggedPoint) return;
 
-zoomSlider.oninput = () => {
+    const pos = getPointerPos(e);
+    draggedPoint.x = pos.x;
+    draggedPoint.y = pos.y - (canvas.height * 0.10);
+
+    lastTouchPos = pos;
+    isCalibrated = false;
+    refFrame = null;
+    hitEl.innerText = "KALIBRERA";
+    e.preventDefault();
+}, { passive: false });
+
+window.addEventListener('touchend', () => {
+    draggedPoint = null;
+    lastTouchPos = null;
+});
+
+canvas.addEventListener('mousedown', (e) => {
+    const pos = getPointerPos(e);
+    draggedPoint = pickDraggedPoint(pos);
+    lastTouchPos = pos;
+});
+
+window.addEventListener('mousemove', (e) => {
+    if (!draggedPoint) return;
+    const pos = getPointerPos(e);
+    draggedPoint.x = pos.x;
+    draggedPoint.y = pos.y;
+    lastTouchPos = pos;
+    isCalibrated = false;
+    refFrame = null;
+    hitEl.innerText = "KALIBRERA";
+});
+
+window.addEventListener('mouseup', () => {
+    draggedPoint = null;
+    lastTouchPos = null;
+});
+
+zoomSlider.oninput = async () => {
     const val = parseFloat(zoomSlider.value);
     zoomLabel.innerText = `ZOOM: ${val.toFixed(1)}x`;
-    if (supportsHardwareZoom) {
-        videoTrack.applyConstraints({ advanced: [{ zoom: val }] });
+
+    try {
+        if (supportsHardwareZoom && videoTrack) {
+            await videoTrack.applyConstraints({ advanced: [{ zoom: val }] });
+        }
+    } catch (err) {
+        console.warn("Zoom kunde inte appliceras:", err);
     }
+
     isCalibrated = false;
+    refFrame = null;
+    lastTip = null;
+    hitEl.innerText = "KALIBRERA";
 };
 
+function drawVideoFrame(targetCtx, targetCanvas) {
+    if (supportsHardwareZoom) {
+        targetCtx.drawImage(video, 0, 0, targetCanvas.width, targetCanvas.height);
+    } else {
+        const z = parseFloat(zoomSlider.value);
+        const vw = video.videoWidth;
+        const vh = video.videoHeight;
+
+        const sw = vw / z;
+        const sh = vh / z;
+        const sx = (vw - sw) / 2;
+        const sy = (vh - sh) / 2;
+
+        targetCtx.drawImage(video, sx, sy, sw, sh, 0, 0, targetCanvas.width, targetCanvas.height);
+    }
+}
+
 function captureReference() {
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    refFrame = new Uint8ClampedArray(ctx.getImageData(0,0,canvas.width,canvas.height).data);
+    if (!canvas.width || !canvas.height) return;
+
+    drawVideoFrame(offscreenCtx, offscreenCanvas);
+    refFrame = new Uint8ClampedArray(
+        offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height).data
+    );
+
     isCalibrated = true;
     lastTip = null;
+    waitingForBoardToSettle = false;
+    stableFramesAfterHit = 0;
     hitEl.innerText = "REDO!";
 }
 
-function process() {
-    // Rita kameran
-    if (supportsHardwareZoom) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    } else {
-        const z = parseFloat(zoomSlider.value);
-        const sw = video.videoWidth / z, sh = video.videoHeight / z;
-        ctx.drawImage(video, (video.videoWidth-sw)/2, (video.videoHeight-sh)/2, sw, sh, 0, 0, canvas.width, canvas.height);
+function process(timestamp) {
+    if (!video.videoWidth || !video.videoHeight) {
+        requestAnimationFrame(process);
+        return;
     }
-    
-    if (isCalibrated) {
-        const currentFrame = ctx.getImageData(0,0,canvas.width,canvas.height).data;
-        let moves = [];
-        // Snabbanalys
-        for(let y=50; y<canvas.height-50; y+=6) {
-            for(let x=50; x<canvas.width-50; x+=6) {
-                const i = (y*canvas.width+x)*4;
-                if(refFrame[i]-currentFrame[i] > 45) moves.push({x,y});
-            }
-        }
 
-        if(moves.length > 15 && moves.length < 1500) {
-            // Beräkna centrum från korsande linjer
-            const d = (points[3].y-points[1].y)*(points[0].x-points[2].x)-(points[3].x-points[1].x)*(points[0].y-points[2].y);
-            const ua = ((points[3].x-points[1].x)*(points[2].y-points[1].y)-(points[3].y-points[1].y)*(points[2].x-points[1].x))/d;
-            const center = { x: points[2].x+ua*(points[0].x-points[2].x), y: points[2].y+ua*(points[0].y-points[2].y) };
-            
-            let sumX=0, sumY=0; moves.forEach(m=>{sumX+=m.x; sumY+=m.y;});
-            const avgX=sumX/moves.length, avgY=sumY/moves.length;
-            const vX=center.x-avgX, vY=center.y-avgY;
-            const mag=Math.sqrt(vX*vX+vY*vY);
-            
-            let bestT=null, maxP=-Infinity;
-            moves.forEach(m=>{
-                const p = (m.x-avgX)*(vX/mag) + (m.y-avgY)*(vY/mag);
-                if(p>maxP){ maxP=p; bestT=m; }
-            });
-            if(bestT) {
-                lastTip = bestT;
-                hitEl.innerText = calculateScore(bestT, center);
+    drawVideoFrame(offscreenCtx, offscreenCanvas);
+    const currentImage = offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+    const currentFrame = currentImage.data;
+
+    ctx.drawImage(offscreenCanvas, 0, 0, canvas.width, canvas.height);
+
+    if (isCalibrated && refFrame) {
+        const now = performance.now();
+        const canDetect = (now - lastDetectionTime) > detectionCooldownMs;
+
+        const motion = detectMotion(refFrame, currentFrame, canvas.width, canvas.height);
+
+        if (!waitingForBoardToSettle && canDetect && motion.moves.length > 25 && motion.moves.length < 2200) {
+            const center = getBoardCenter();
+            const tip = estimateTip(motion.moves, center);
+
+            if (tip && isLikelyOnBoard(tip, center)) {
+                lastTip = tip;
+                hitEl.innerText = calculateScore(tip, center);
+                lastDetectionTime = now;
+                waitingForBoardToSettle = true;
+                stableFramesAfterHit = 0;
+            }
+        } else if (waitingForBoardToSettle) {
+            if (motion.moves.length < 12) {
+                stableFramesAfterHit++;
+            } else {
+                stableFramesAfterHit = 0;
+            }
+
+            if (stableFramesAfterHit >= 8) {
                 refFrame = new Uint8ClampedArray(currentFrame);
+                waitingForBoardToSettle = false;
+                stableFramesAfterHit = 0;
             }
         }
     }
+
     drawOverlay();
     requestAnimationFrame(process);
 }
 
+function detectMotion(reference, current, width, height) {
+    const moves = [];
+
+    const margin = 80;
+    const step = 6;
+
+    for (let y = margin; y < height - margin; y += step) {
+        for (let x = margin; x < width - margin; x += step) {
+            const i = (y * width + x) * 4;
+
+            const dr = Math.abs(reference[i] - current[i]);
+            const dg = Math.abs(reference[i + 1] - current[i + 1]);
+            const db = Math.abs(reference[i + 2] - current[i + 2]);
+
+            const diff = dr + dg + db;
+
+            // kräver både total skillnad och att bilden blivit mörkare lite grand
+            const darker =
+                (reference[i] + reference[i + 1] + reference[i + 2]) -
+                (current[i] + current[i + 1] + current[i + 2]);
+
+            if (diff > 90 && darker > 20) {
+                moves.push({ x, y });
+            }
+        }
+    }
+
+    return { moves };
+}
+
+function estimateTip(moves, center) {
+    if (!moves.length) return null;
+
+    let avgX = 0;
+    let avgY = 0;
+
+    for (const m of moves) {
+        avgX += m.x;
+        avgY += m.y;
+    }
+
+    avgX /= moves.length;
+    avgY /= moves.length;
+
+    const vx = center.x - avgX;
+    const vy = center.y - avgY;
+    const mag = Math.hypot(vx, vy);
+
+    if (mag < 1) return null;
+
+    let bestTip = null;
+    let bestProj = -Infinity;
+
+    for (const m of moves) {
+        const proj = ((m.x - avgX) * vx / mag) + ((m.y - avgY) * vy / mag);
+        if (proj > bestProj) {
+            bestProj = proj;
+            bestTip = m;
+        }
+    }
+
+    return bestTip;
+}
+
+function getBoardCenter() {
+    return getLineIntersection(points[0], points[2], points[1], points[3]);
+}
+
+function getBoardRadius(center) {
+    const rTop = Math.hypot(points[0].x - center.x, points[0].y - center.y);
+    const rRight = Math.hypot(points[1].x - center.x, points[1].y - center.y);
+    const rBottom = Math.hypot(points[2].x - center.x, points[2].y - center.y);
+    const rLeft = Math.hypot(points[3].x - center.x, points[3].y - center.y);
+
+    return (rTop + rRight + rBottom + rLeft) / 4;
+}
+
+function isLikelyOnBoard(tip, center) {
+    const r = getBoardRadius(center);
+    const d = Math.hypot(tip.x - center.x, tip.y - center.y);
+    return d <= r * 1.15;
+}
+
+function getLineIntersection(p1, p2, p3, p4) {
+    const d =
+        (p4.y - p3.y) * (p2.x - p1.x) -
+        (p4.x - p3.x) * (p2.y - p1.y);
+
+    if (Math.abs(d) < 0.0001) {
+        return { x: canvas.width / 2, y: canvas.height / 2 };
+    }
+
+    const ua =
+        ((p4.x - p3.x) * (p1.y - p3.y) -
+         (p4.y - p3.y) * (p1.x - p3.x)) / d;
+
+    return {
+        x: p1.x + ua * (p2.x - p1.x),
+        y: p1.y + ua * (p2.y - p1.y)
+    };
+}
+
 function calculateScore(tip, center) {
-    const dx=tip.x-center.x, dy=tip.y-center.y;
-    let ang = Math.atan2(dy,dx)*(180/Math.PI)+90+9;
-    if(ang<0) ang+=360;
-    const r = (Math.abs(points[0].y-center.y) + Math.abs(points[1].x-center.x))/2;
-    const pct = Math.sqrt(dx*dx+dy*dy)/r;
-    if(pct>1.05) return "MISS";
-    if(pct<0.04) return "BULL (50)";
-    if(pct<0.09) return "BULL (25)";
-    const segs = [20,1,18,4,13,6,10,15,2,17,3,19,7,16,8,11,14,9,12,5];
-    const b = segs[Math.floor((ang%360)/18)];
-    if(pct>0.93) return "D"+b;
-    if(pct>0.55 && pct<0.63) return "T"+b;
-    return b.toString();
+    const dx = tip.x - center.x;
+    const dy = tip.y - center.y;
+
+    // 0° = rakt upp, ökar medurs, centrum av första sektor = 20
+    let ang = (Math.atan2(dy, dx) * 180 / Math.PI + 99) % 360;
+    if (ang < 0) ang += 360;
+
+    const r = getBoardRadius(center);
+    const dist = Math.hypot(dx, dy);
+    const pct = dist / r;
+
+    if (pct > 1.05) return "MISS";
+    if (pct < 0.04) return "BULL (50)";
+    if (pct < 0.09) return "BULL (25)";
+
+    const segs = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
+    const base = segs[Math.floor(ang / 18)];
+
+    if (pct > 0.93) return "D" + base;
+    if (pct > 0.56 && pct < 0.64) return "T" + base;
+
+    return String(base);
 }
 
 function drawOverlay() {
-    // Hjälplinjer
-    ctx.strokeStyle = "rgba(255,255,255,0.2)";
-    ctx.beginPath(); ctx.moveTo(points[0].x, points[0].y); ctx.lineTo(points[2].x, points[2].y); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(points[1].x, points[1].y); ctx.lineTo(points[3].x, points[3].y); ctx.stroke();
+    const center = getBoardCenter();
+    const radius = getBoardRadius(center);
 
-    points.forEach(p => {
+    // hjälplinjer
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(255,255,255,0.28)";
+    ctx.setLineDash([10, 10]);
+
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    ctx.lineTo(points[2].x, points[2].y);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(points[1].x, points[1].y);
+    ctx.lineTo(points[3].x, points[3].y);
+    ctx.stroke();
+
+    ctx.setLineDash([]);
+
+    // centrum
+    ctx.fillStyle = "rgba(255,255,255,0.8)";
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // ytterring
+    ctx.strokeStyle = "rgba(255,255,255,0.15)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // kalibreringspunkter
+    for (const p of points) {
         ctx.fillStyle = p.color;
-        ctx.beginPath(); ctx.arc(p.x, p.y, 25, 0, Math.PI*2); ctx.fill();
-        ctx.strokeStyle = "white"; ctx.stroke();
-    });
-    if(lastTip) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 28, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = "white";
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        ctx.fillStyle = "white";
+        ctx.font = "bold 32px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(p.label, p.x, p.y + 1);
+    }
+
+    // magnifier
+    if (draggedPoint && lastTouchPos) {
+        const magSize = 220;
+        const magX = 20;
+        const magY = 20;
+        const srcSize = 120;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(magX + magSize / 2, magY + magSize / 2, magSize / 2, 0, Math.PI * 2);
+        ctx.clip();
+
+        let sx = draggedPoint.x - srcSize / 2;
+        let sy = draggedPoint.y - srcSize / 2;
+
+        sx = Math.max(0, Math.min(canvas.width - srcSize, sx));
+        sy = Math.max(0, Math.min(canvas.height - srcSize, sy));
+
+        ctx.drawImage(
+            offscreenCanvas,
+            sx, sy, srcSize, srcSize,
+            magX, magY, magSize, magSize
+        );
+
+        // overlay-punkter även i förstoringsglas
+        const scale = magSize / srcSize;
+        const localX = magX + (draggedPoint.x - sx) * scale;
+        const localY = magY + (draggedPoint.y - sy) * scale;
+
+        ctx.strokeStyle = "white";
+        ctx.lineWidth = 2;
+
+        ctx.beginPath();
+        ctx.moveTo(magX + magSize / 2, magY);
+        ctx.lineTo(magX + magSize / 2, magY + magSize);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(magX, magY + magSize / 2);
+        ctx.lineTo(magX + magSize, magY + magSize / 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = draggedPoint.color;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(localX, localY, 16, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.restore();
+
+        ctx.strokeStyle = draggedPoint.color;
+        ctx.lineWidth = 5;
+        ctx.strokeRect(magX, magY, magSize, magSize);
+    }
+
+    // senaste träff
+    if (lastTip) {
         ctx.fillStyle = "#00d2ff";
-        ctx.beginPath(); ctx.arc(lastTip.x, lastTip.y, 15, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath();
+        ctx.arc(lastTip.x, lastTip.y, 13, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = "white";
+        ctx.lineWidth = 2;
+        ctx.stroke();
     }
 }
 </script>
