@@ -42,6 +42,7 @@ const zoomSlider = document.getElementById('zoom-slider');
 let refFrame = null;
 let isCalibrated = false;
 let board = { x: 0, y: 0, r: 0 }; 
+let lastTip = null; // För att rita ut den blå pricken vid träff
 
 navigator.mediaDevices.getUserMedia({ 
     video: { 
@@ -68,6 +69,7 @@ function captureReference() {
     const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
     refFrame = new Uint8ClampedArray(frame.data);
     isCalibrated = true;
+    lastTip = null;
     hitEl.innerText = "REDO!";
 }
 
@@ -81,9 +83,10 @@ function process() {
     const sx = (vw - sw) / 2;
     const sy = (vh - sh) / 2;
 
-    // Rita inzoomat
+    // 1. Rita inzoomat
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
     
+    // 2. Rörelseanalys
     if (isCalibrated) {
         const currentFrame = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
         let movements = [];
@@ -105,7 +108,7 @@ function process() {
             }
         }
 
-        // --- SPETSDETEKTION ---
+        // --- SPETSDETEKTION (Hitta punkt närmast Bullseye) ---
         if (movements.length > 15 && movements.length < 2000) {
             let closestDist = Infinity;
             let tipX = 0;
@@ -123,12 +126,13 @@ function process() {
                 }
             }
             
+            lastTip = { x: tipX, y: tipY }; // Spara för overlay
             triggerHit(tipX, tipY);
-            // Uppdatera referens direkt för att frysa pilen i minnet
             refFrame = new Uint8ClampedArray(currentFrame);
         }
     }
     
+    // 3. Rita grafik
     drawOverlay();
     requestAnimationFrame(process);
 }
@@ -161,24 +165,36 @@ function triggerHit(x, y) {
 
 function drawOverlay() {
     ctx.lineWidth = 4;
-    // Tavla
+    
+    // Rita tavlans zoner
     ctx.strokeStyle = "rgba(0, 255, 0, 0.4)";
     ctx.beginPath();
     ctx.arc(board.x, board.y, board.r, 0, Math.PI * 2);
     ctx.arc(board.x, board.y, board.r * 0.92, 0, Math.PI * 2);
     ctx.stroke();
     
-    // Trippel
     ctx.strokeStyle = "rgba(255, 0, 0, 0.3)";
     ctx.beginPath();
     ctx.arc(board.x, board.y, board.r * 0.62, 0, Math.PI * 2);
     ctx.arc(board.x, board.y, board.r * 0.55, 0, Math.PI * 2);
     ctx.stroke();
 
+    // Sikte (Mitten)
     ctx.fillStyle = "red";
     ctx.beginPath();
-    ctx.arc(board.x, board.y, 5, 0, Math.PI*2);
+    ctx.arc(board.x, board.y, 6, 0, Math.PI*2);
     ctx.fill();
+
+    // Sista träffen (Spetsen)
+    if (lastTip) {
+        ctx.fillStyle = "#3498db"; // Blå färg för spetsen
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = "white";
+        ctx.beginPath();
+        ctx.arc(lastTip.x, lastTip.y, 10, 0, Math.PI*2);
+        ctx.fill();
+        ctx.shadowBlur = 0; // Återställ skugga
+    }
 }
 </script>
 </body>
