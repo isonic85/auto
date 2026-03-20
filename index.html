@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>DeepDart Pro - Precision Edition</title>
+  <title>DeepDart Pro - ROI Precision</title>
   <style>
     :root {
       --bg: #121212;
@@ -18,6 +18,7 @@
       --blue: #0a84ff;
       --yellow: #ffd60a;
       --red: #ff453a;
+      --cyan: #00d2ff;
     }
 
     * {
@@ -98,7 +99,7 @@
 
     #hit-display {
       color: var(--green);
-      font-size: 2.1rem;
+      font-size: 2.05rem;
       font-weight: 900;
       text-align: center;
       margin: 2px 0;
@@ -180,10 +181,15 @@
     const resetBtn = document.getElementById('reset-btn');
     const calBtn = document.getElementById('cal-btn');
 
-    const offscreenCanvas = document.createElement('canvas');
-    const offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
+    const fullCanvas = document.createElement('canvas');
+    const fullCtx = fullCanvas.getContext('2d', { willReadFrequently: true });
 
-    let refFrame = null;
+    const motionCanvas = document.createElement('canvas');
+    const motionCtx = motionCanvas.getContext('2d', { willReadFrequently: true });
+
+    let refMotionFrame = null;
+    let refFullFrame = null;
+
     let isCalibrated = false;
     let videoTrack = null;
     let supportsHardwareZoom = false;
@@ -191,19 +197,38 @@
     let draggedPoint = null;
     let activePointerId = null;
     let lastPointerPosCanvas = null;
-    let lastTip = null;
-    let lastMotionCluster = null;
 
-    let lastDetectionTime = 0;
-    const detectionCooldownMs = 650;
+    let liveTip = null;
+    let lastTip = null;
+    let liveROI = null;
 
     let waitingForBoardToSettle = false;
     let stableFrameCount = 0;
-    const stableFramesNeeded = 8;
-    const settleMotionThreshold = 45;
+    let tipHistory = [];
+    let lockedCandidateStartedAt = 0;
+
+    const stableFramesNeeded = 5;
+    const settleBlobThreshold = 4;
+    const hitCooldownMs = 700;
+    let lastHitTime = 0;
 
     const HANDLE_RADIUS_CANVAS = 34;
     const HANDLE_HIT_RADIUS_SCREEN = 56;
+
+    const MOTION_SCALE = 0.375;
+
+    const MOTION_DIFF_THRESHOLD = 42;
+    const MOTION_MIN_BLOB_AREA = 8;
+    const MOTION_MAX_DART_AREA = 180;
+    const MOTION_HAND_AREA = 260;
+
+    const ROI_PADDING_FULL = 70;
+    const ROI_MIN_SIZE_FULL = 110;
+
+    const FULL_DIFF_THRESHOLD = 70;
+    const FULL_POINT_DENSITY_RADIUS = 2;
+    const FULL_POINT_MIN_NEIGHBORS = 2;
+    const MAX_REFINED_POINTS = 1400;
 
     const points = [
       { x: 0, y: 0, color: '#ff3b30', label: '20' },
@@ -228,8 +253,8 @@
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
             facingMode: { ideal: 'environment' }
           },
           audio: false
@@ -270,8 +295,11 @@
     function resizeInternalCanvases(w, h) {
       canvas.width = w;
       canvas.height = h;
-      offscreenCanvas.width = w;
-      offscreenCanvas.height = h;
+      fullCanvas.width = w;
+      fullCanvas.height = h;
+
+      motionCanvas.width = Math.max(160, Math.round(w * MOTION_SCALE));
+      motionCanvas.height = Math.max(90, Math.round(h * MOTION_SCALE));
     }
 
     function resetPoints() {
@@ -298,12 +326,16 @@
     }
 
     function clearCalibration() {
+      refMotionFrame = null;
+      refFullFrame = null;
       isCalibrated = false;
-      refFrame = null;
+      liveTip = null;
       lastTip = null;
-      lastMotionCluster = null;
+      liveROI = null;
       waitingForBoardToSettle = false;
       stableFrameCount = 0;
+      tipHistory = [];
+      lockedCandidateStartedAt = 0;
     }
 
     function getCanvasPosFromEvent(e) {
@@ -390,9 +422,7 @@
 
       if (supportsHardwareZoom && videoTrack) {
         try {
-          await videoTrack.applyConstraints({
-            advanced: [{ zoom: val }]
-          });
+          await videoTrack.applyConstraints({ advanced: [{ zoom: val }] });
         } catch (err) {
           console.warn('Zoom applyConstraints misslyckades:', err);
         }
@@ -408,27 +438,34 @@
     function captureReference() {
       if (!canvas.width || !canvas.height) return;
 
-      drawVideoFrame(offscreenCtx, offscreenCanvas);
+      drawFullFrame();
+      drawMotionFrame();
 
-      const img = offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
-      refFrame = new Uint8ClampedArray(img.data);
+      const motionImage = motionCtx.getImageData(0, 0, motionCanvas.width, motionCanvas.height);
+      const fullImage = fullCtx.getImageData(0, 0, fullCanvas.width, fullCanvas.height);
+
+      refMotionFrame = new Uint8ClampedArray(motionImage.data);
+      refFullFrame = new Uint8ClampedArray(fullImage.data);
+
       isCalibrated = true;
+      liveTip = null;
+      lastTip = null;
+      liveROI = null;
       waitingForBoardToSettle = false;
       stableFrameCount = 0;
-      lastTip = null;
-      lastMotionCluster = null;
+      tipHistory = [];
 
       setStatus('REDO!', 'ok');
       setDebug('debug: kalibrerad');
     }
 
-    function drawVideoFrame(targetCtx, targetCanvas) {
+    function drawFullFrame() {
       if (!video.videoWidth || !video.videoHeight) return;
 
-      targetCtx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+      fullCtx.clearRect(0, 0, fullCanvas.width, fullCanvas.height);
 
       if (supportsHardwareZoom) {
-        targetCtx.drawImage(video, 0, 0, targetCanvas.width, targetCanvas.height);
+        fullCtx.drawImage(video, 0, 0, fullCanvas.width, fullCanvas.height);
         return;
       }
 
@@ -438,11 +475,16 @@
       const sx = (video.videoWidth - sw) / 2;
       const sy = (video.videoHeight - sh) / 2;
 
-      targetCtx.drawImage(
+      fullCtx.drawImage(
         video,
         sx, sy, sw, sh,
-        0, 0, targetCanvas.width, targetCanvas.height
+        0, 0, fullCanvas.width, fullCanvas.height
       );
+    }
+
+    function drawMotionFrame() {
+      motionCtx.clearRect(0, 0, motionCanvas.width, motionCanvas.height);
+      motionCtx.drawImage(fullCanvas, 0, 0, motionCanvas.width, motionCanvas.height);
     }
 
     function process(now = performance.now()) {
@@ -451,57 +493,117 @@
         return;
       }
 
-      drawVideoFrame(offscreenCtx, offscreenCanvas);
-
-      const frame = offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
-      const currentFrame = frame.data;
+      drawFullFrame();
+      drawMotionFrame();
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(offscreenCanvas, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(fullCanvas, 0, 0, canvas.width, canvas.height);
 
       const center = getBoardCenter();
       const radius = getBoardRadius(center);
 
-      if (isFinite(center.x) && isFinite(center.y) && radius > 10 && isCalibrated && refFrame) {
-        const analysis = detectMotion(refFrame, currentFrame, canvas.width, canvas.height, center, radius);
+      if (
+        isFinite(center.x) &&
+        isFinite(center.y) &&
+        radius > 10 &&
+        isCalibrated &&
+        refMotionFrame &&
+        refFullFrame
+      ) {
+        const motionImage = motionCtx.getImageData(0, 0, motionCanvas.width, motionCanvas.height);
+        const motionFrame = motionImage.data;
+
+        const motionCenter = scalePointToMotion(center);
+        const motionRadius = radius * MOTION_SCALE;
+
+        const motionResult = detectMotionBlobs(
+          refMotionFrame,
+          motionFrame,
+          motionCanvas.width,
+          motionCanvas.height,
+          motionCenter,
+          motionRadius
+        );
+
+        liveTip = null;
+        liveROI = null;
+
+        if (motionResult.bestBlob && motionResult.bestBlob.area <= MOTION_HAND_AREA) {
+          const liveMotionTip = estimateBlobTip(motionResult.bestBlob.points, motionCenter);
+          if (liveMotionTip) {
+            liveTip = scalePointFromMotion(liveMotionTip);
+            liveROI = motionBlobToFullROI(motionResult.bestBlob);
+          }
+        }
+
+        const timeSinceLastHit = now - lastHitTime;
+        const canStartNewHit = timeSinceLastHit > hitCooldownMs;
 
         if (!waitingForBoardToSettle) {
-          const enoughTimePassed = (now - lastDetectionTime) > detectionCooldownMs;
+          const bestArea = motionResult.bestBlob ? motionResult.bestBlob.area : 0;
+          const isHand = bestArea >= MOTION_HAND_AREA;
+          const plausibleDart =
+            motionResult.bestBlob &&
+            bestArea >= MOTION_MIN_BLOB_AREA &&
+            bestArea <= MOTION_MAX_DART_AREA &&
+            !isHand;
 
-          setDebug(`debug: moves=${analysis.moves.length} cluster=${analysis.bestCluster ? analysis.bestCluster.length : 0}`);
+          setDebug(`debug: blobs=${motionResult.blobs.length} best=${bestArea} hand=${isHand ? 'ja' : 'nej'} live=${liveTip ? 'ja' : 'nej'}`);
 
-          const clusterSize = analysis.bestCluster ? analysis.bestCluster.length : 0;
-          const plausibleMotion = clusterSize >= 6 && clusterSize <= 400;
-
-          if (enoughTimePassed && plausibleMotion) {
-            const tip = estimateTip(analysis.bestCluster, center);
-
-            if (tip && isLikelyOnBoard(tip, center, radius)) {
-              lastTip = tip;
-              lastMotionCluster = analysis.bestCluster;
-              setStatus(calculateScore(tip, center, radius), 'ok');
-              lastDetectionTime = now;
-              waitingForBoardToSettle = true;
-              stableFrameCount = 0;
-            }
+          if (plausibleDart && canStartNewHit && liveROI) {
+            waitingForBoardToSettle = true;
+            stableFrameCount = 0;
+            tipHistory = [];
+            lockedCandidateStartedAt = now;
           }
         } else {
-          const movementNow = analysis.bestCluster ? analysis.bestCluster.length : 0;
-          const isStable = movementNow < settleMotionThreshold;
+          const fullImage = fullCtx.getImageData(0, 0, fullCanvas.width, fullCanvas.height);
+          const fullFrame = fullImage.data;
 
-          if (isStable) {
+          let refinedTip = null;
+
+          if (liveROI) {
+            refinedTip = refineTipInROI(refFullFrame, fullFrame, liveROI, center);
+          }
+
+          if (!refinedTip && liveTip && isLikelyOnBoard(liveTip, center, radius)) {
+            refinedTip = liveTip;
+          }
+
+          if (refinedTip && isLikelyOnBoard(refinedTip, center, radius)) {
+            tipHistory.push({ x: refinedTip.x, y: refinedTip.y });
+            if (tipHistory.length > 20) tipHistory.shift();
+          }
+
+          const blobArea = motionResult.bestBlob ? motionResult.bestBlob.area : 0;
+          const stableNow = blobArea < settleBlobThreshold;
+
+          if (stableNow) {
             stableFrameCount++;
           } else {
             stableFrameCount = 0;
           }
 
-          setDebug(`debug: settle cluster=${movementNow} stable=${stableFrameCount}/${stableFramesNeeded}`);
+          setDebug(`debug: settle area=${blobArea} stable=${stableFrameCount}/${stableFramesNeeded} tips=${tipHistory.length}`);
 
-          if (stableFrameCount >= stableFramesNeeded) {
-            refFrame = new Uint8ClampedArray(currentFrame);
+          if (stableFrameCount >= stableFramesNeeded || (now - lockedCandidateStartedAt) > 1200) {
+            const locked = refineLockedTip(tipHistory, center, radius);
+
+            if (locked) {
+              lastTip = locked;
+              setStatus(calculateScore(locked, center, radius), 'ok');
+              lastHitTime = now;
+            } else {
+              setStatus('INGEN TRÄFF', 'warn');
+            }
+
+            refMotionFrame = new Uint8ClampedArray(motionFrame);
+            refFullFrame = new Uint8ClampedArray(fullFrame);
+
             waitingForBoardToSettle = false;
             stableFrameCount = 0;
-            lastMotionCluster = null;
+            tipHistory = [];
+            liveROI = null;
           }
         }
       }
@@ -510,138 +612,381 @@
       requestAnimationFrame(process);
     }
 
-    function detectMotion(referenceFrame, currentFrame, w, h, center, radius) {
-      const moves = [];
-      const step = 2;
+    function detectMotionBlobs(referenceFrame, currentFrame, w, h, center, radius) {
       const searchRadius = radius * 1.18;
       const minX = Math.max(0, Math.floor(center.x - searchRadius));
       const maxX = Math.min(w - 1, Math.ceil(center.x + searchRadius));
       const minY = Math.max(0, Math.floor(center.y - searchRadius));
       const maxY = Math.min(h - 1, Math.ceil(center.y + searchRadius));
 
-      for (let y = minY; y <= maxY; y += step) {
-        for (let x = minX; x <= maxX; x += step) {
-          const distToCenter = Math.hypot(x - center.x, y - center.y);
-          if (distToCenter > searchRadius) continue;
+      const roiW = maxX - minX + 1;
+      const roiH = maxY - minY + 1;
+
+      const mask = new Uint8Array(roiW * roiH);
+
+      for (let y = minY; y <= maxY; y++) {
+        for (let x = minX; x <= maxX; x++) {
+          const dx = x - center.x;
+          const dy = y - center.y;
+          if ((dx * dx + dy * dy) > searchRadius * searchRadius) continue;
 
           const i = (y * w + x) * 4;
+          const diff =
+            Math.abs(referenceFrame[i] - currentFrame[i]) +
+            Math.abs(referenceFrame[i + 1] - currentFrame[i + 1]) +
+            Math.abs(referenceFrame[i + 2] - currentFrame[i + 2]);
 
-          const dr = Math.abs(referenceFrame[i] - currentFrame[i]);
-          const dg = Math.abs(referenceFrame[i + 1] - currentFrame[i + 1]);
-          const db = Math.abs(referenceFrame[i + 2] - currentFrame[i + 2]);
-
-          const diff = dr + dg + db;
-
-          if (diff > 55) {
-            moves.push({ x, y });
+          if (diff > MOTION_DIFF_THRESHOLD) {
+            mask[(y - minY) * roiW + (x - minX)] = 1;
           }
         }
       }
 
-      const clusters = clusterPoints(moves, 18);
-      const bestCluster = selectBestCluster(clusters, center, radius);
-
-      return { moves, clusters, bestCluster };
-    }
-
-    function clusterPoints(points, maxDist) {
-      const clusters = [];
-      const used = new Array(points.length).fill(false);
-
-      for (let i = 0; i < points.length; i++) {
-        if (used[i]) continue;
-
-        const cluster = [];
-        const queue = [i];
-        used[i] = true;
-
-        while (queue.length) {
-          const idx = queue.pop();
-          const p = points[idx];
-          cluster.push(p);
-
-          for (let j = 0; j < points.length; j++) {
-            if (used[j]) continue;
-            const q = points[j];
-            if (Math.hypot(p.x - q.x, p.y - q.y) <= maxDist) {
-              used[j] = true;
-              queue.push(j);
-            }
-          }
-        }
-
-        clusters.push(cluster);
-      }
-
-      return clusters;
-    }
-
-    function selectBestCluster(clusters, center, radius) {
-      if (!clusters.length) return null;
-
-      let best = null;
+      const blobs = extractBlobs(mask, roiW, roiH, minX, minY);
+      let bestBlob = null;
       let bestScore = -Infinity;
 
-      for (const cluster of clusters) {
-        if (cluster.length < 4) continue;
-
-        const c = getClusterCenter(cluster);
+      for (const blob of blobs) {
+        const c = blob.center;
         const dist = Math.hypot(c.x - center.x, c.y - center.y);
-
-        if (dist > radius * 1.1) continue;
-
-        const spread = getClusterSpread(cluster, c);
-        const score = cluster.length * 3 - spread * 0.4 - dist * 0.02;
+        const aspect = Math.max(blob.width, blob.height) / Math.max(1, Math.min(blob.width, blob.height));
+        const areaScore = Math.min(blob.area, MOTION_MAX_DART_AREA) * 3;
+        const shapeScore = aspect * 8;
+        const score = areaScore + shapeScore - dist * 0.08;
 
         if (score > bestScore) {
           bestScore = score;
-          best = cluster;
+          bestBlob = blob;
+        }
+      }
+
+      return { blobs, bestBlob };
+    }
+
+    function extractBlobs(mask, w, h, offsetX, offsetY) {
+      const blobs = [];
+      const visited = new Uint8Array(mask.length);
+      const qx = new Int32Array(mask.length);
+      const qy = new Int32Array(mask.length);
+
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const startIdx = y * w + x;
+          if (!mask[startIdx] || visited[startIdx]) continue;
+
+          let qh = 0;
+          let qt = 0;
+
+          visited[startIdx] = 1;
+          qx[qt] = x;
+          qy[qt] = y;
+          qt++;
+
+          const pts = [];
+          let minX = x, maxX = x, minY = y, maxY = y;
+          let sumX = 0, sumY = 0;
+
+          while (qh < qt) {
+            const cx = qx[qh];
+            const cy = qy[qh];
+            qh++;
+
+            pts.push({ x: cx + offsetX, y: cy + offsetY });
+            sumX += cx + offsetX;
+            sumY += cy + offsetY;
+
+            if (cx < minX) minX = cx;
+            if (cx > maxX) maxX = cx;
+            if (cy < minY) minY = cy;
+            if (cy > maxY) maxY = cy;
+
+            for (let ny = cy - 1; ny <= cy + 1; ny++) {
+              for (let nx = cx - 1; nx <= cx + 1; nx++) {
+                if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+                const ni = ny * w + nx;
+                if (!mask[ni] || visited[ni]) continue;
+                visited[ni] = 1;
+                qx[qt] = nx;
+                qy[qt] = ny;
+                qt++;
+              }
+            }
+          }
+
+          const area = pts.length;
+          if (area < MOTION_MIN_BLOB_AREA) continue;
+
+          const width = maxX - minX + 1;
+          const height = maxY - minY + 1;
+
+          blobs.push({
+            area,
+            width,
+            height,
+            minX: minX + offsetX,
+            maxX: maxX + offsetX,
+            minY: minY + offsetY,
+            maxY: maxY + offsetY,
+            center: {
+              x: sumX / area,
+              y: sumY / area
+            },
+            points: pts
+          });
+        }
+      }
+
+      return blobs;
+    }
+
+    function motionBlobToFullROI(blob) {
+      const scale = 1 / MOTION_SCALE;
+
+      let minX = Math.floor(blob.minX * scale) - ROI_PADDING_FULL;
+      let minY = Math.floor(blob.minY * scale) - ROI_PADDING_FULL;
+      let maxX = Math.ceil((blob.maxX + 1) * scale) + ROI_PADDING_FULL;
+      let maxY = Math.ceil((blob.maxY + 1) * scale) + ROI_PADDING_FULL;
+
+      if ((maxX - minX) < ROI_MIN_SIZE_FULL) {
+        const cx = (minX + maxX) / 2;
+        minX = Math.floor(cx - ROI_MIN_SIZE_FULL / 2);
+        maxX = Math.ceil(cx + ROI_MIN_SIZE_FULL / 2);
+      }
+
+      if ((maxY - minY) < ROI_MIN_SIZE_FULL) {
+        const cy = (minY + maxY) / 2;
+        minY = Math.floor(cy - ROI_MIN_SIZE_FULL / 2);
+        maxY = Math.ceil(cy + ROI_MIN_SIZE_FULL / 2);
+      }
+
+      return {
+        minX: clamp(minX, 0, fullCanvas.width - 1),
+        minY: clamp(minY, 0, fullCanvas.height - 1),
+        maxX: clamp(maxX, 1, fullCanvas.width),
+        maxY: clamp(maxY, 1, fullCanvas.height)
+      };
+    }
+
+    function refineTipInROI(referenceFrame, currentFrame, roi, boardCenter) {
+      const points = [];
+      const width = fullCanvas.width;
+
+      for (let y = roi.minY; y < roi.maxY; y++) {
+        for (let x = roi.minX; x < roi.maxX; x++) {
+          const i = (y * width + x) * 4;
+
+          const diff =
+            Math.abs(referenceFrame[i] - currentFrame[i]) +
+            Math.abs(referenceFrame[i + 1] - currentFrame[i + 1]) +
+            Math.abs(referenceFrame[i + 2] - currentFrame[i + 2]);
+
+          if (diff > FULL_DIFF_THRESHOLD) {
+            points.push({ x, y });
+            if (points.length >= MAX_REFINED_POINTS) break;
+          }
+        }
+        if (points.length >= MAX_REFINED_POINTS) break;
+      }
+
+      if (points.length < 10) return null;
+
+      const densePoints = filterDensePoints(points, FULL_POINT_DENSITY_RADIUS, FULL_POINT_MIN_NEIGHBORS);
+      if (densePoints.length < 8) return null;
+
+      const axis = principalAxis(densePoints);
+      if (!axis) return null;
+
+      const center = axis.center;
+      const dir = axis.dir;
+
+      let endA = null;
+      let endB = null;
+      let minProj = Infinity;
+      let maxProj = -Infinity;
+
+      for (const p of densePoints) {
+        const proj = (p.x - center.x) * dir.x + (p.y - center.y) * dir.y;
+        if (proj < minProj) {
+          minProj = proj;
+          endA = p;
+        }
+        if (proj > maxProj) {
+          maxProj = proj;
+          endB = p;
+        }
+      }
+
+      if (!endA || !endB) return null;
+
+      const da = Math.hypot(endA.x - boardCenter.x, endA.y - boardCenter.y);
+      const db = Math.hypot(endB.x - boardCenter.x, endB.y - boardCenter.y);
+
+      return da < db ? endA : endB;
+    }
+
+    function filterDensePoints(points, radius, minNeighbors) {
+      const cellSize = Math.max(1, radius);
+      const grid = new Map();
+
+      for (const p of points) {
+        const gx = Math.floor(p.x / cellSize);
+        const gy = Math.floor(p.y / cellSize);
+        const key = `${gx},${gy}`;
+        if (!grid.has(key)) grid.set(key, []);
+        grid.get(key).push(p);
+      }
+
+      const out = [];
+
+      for (const p of points) {
+        const gx = Math.floor(p.x / cellSize);
+        const gy = Math.floor(p.y / cellSize);
+        let neighbors = 0;
+
+        for (let yy = gy - 1; yy <= gy + 1; yy++) {
+          for (let xx = gx - 1; xx <= gx + 1; xx++) {
+            const key = `${xx},${yy}`;
+            const arr = grid.get(key);
+            if (!arr) continue;
+
+            for (const q of arr) {
+              if (Math.abs(q.x - p.x) <= radius && Math.abs(q.y - p.y) <= radius) {
+                neighbors++;
+                if (neighbors >= minNeighbors + 1) break;
+              }
+            }
+            if (neighbors >= minNeighbors + 1) break;
+          }
+          if (neighbors >= minNeighbors + 1) break;
+        }
+
+        if (neighbors >= minNeighbors + 1) {
+          out.push(p);
+        }
+      }
+
+      return out;
+    }
+
+    function principalAxis(points) {
+      if (!points.length) return null;
+
+      let meanX = 0;
+      let meanY = 0;
+      for (const p of points) {
+        meanX += p.x;
+        meanY += p.y;
+      }
+      meanX /= points.length;
+      meanY /= points.length;
+
+      let sxx = 0;
+      let syy = 0;
+      let sxy = 0;
+
+      for (const p of points) {
+        const dx = p.x - meanX;
+        const dy = p.y - meanY;
+        sxx += dx * dx;
+        syy += dy * dy;
+        sxy += dx * dy;
+      }
+
+      const trace = sxx + syy;
+      const detTerm = Math.sqrt(Math.max(0, ((sxx - syy) * (sxx - syy)) + 4 * sxy * sxy));
+      const lambda = (trace + detTerm) / 2;
+
+      let vx = sxy;
+      let vy = lambda - sxx;
+
+      if (Math.abs(vx) < 1e-6 && Math.abs(vy) < 1e-6) {
+        vx = 1;
+        vy = 0;
+      }
+
+      const mag = Math.hypot(vx, vy);
+      if (mag < 1e-6) return null;
+
+      return {
+        center: { x: meanX, y: meanY },
+        dir: { x: vx / mag, y: vy / mag }
+      };
+    }
+
+    function estimateBlobTip(blobPoints, center) {
+      if (!blobPoints || !blobPoints.length) return null;
+
+      let avgX = 0;
+      let avgY = 0;
+      for (const p of blobPoints) {
+        avgX += p.x;
+        avgY += p.y;
+      }
+      avgX /= blobPoints.length;
+      avgY /= blobPoints.length;
+
+      const vx = center.x - avgX;
+      const vy = center.y - avgY;
+      const mag = Math.hypot(vx, vy);
+      if (mag < 1) return null;
+
+      let best = null;
+      let bestProj = -Infinity;
+
+      for (const p of blobPoints) {
+        const proj = ((p.x - avgX) * vx / mag) + ((p.y - avgY) * vy / mag);
+        if (proj > bestProj) {
+          bestProj = proj;
+          best = p;
         }
       }
 
       return best;
     }
 
-    function getClusterCenter(cluster) {
-      let x = 0;
-      let y = 0;
-      for (const p of cluster) {
-        x += p.x;
-        y += p.y;
-      }
-      return { x: x / cluster.length, y: y / cluster.length };
-    }
+    function refineLockedTip(history, center, radius) {
+      if (!history.length) return null;
 
-    function getClusterSpread(cluster, c) {
-      let s = 0;
-      for (const p of cluster) {
-        s += Math.hypot(p.x - c.x, p.y - c.y);
-      }
-      return s / cluster.length;
-    }
+      const filtered = history.filter(p => isLikelyOnBoard(p, center, radius));
+      if (!filtered.length) return null;
 
-    function estimateTip(cluster, center) {
-      if (!cluster || cluster.length === 0) return null;
+      const xs = filtered.map(p => p.x).sort((a, b) => a - b);
+      const ys = filtered.map(p => p.y).sort((a, b) => a - b);
 
-      const clusterCenter = getClusterCenter(cluster);
+      const mx = median(xs);
+      const my = median(ys);
 
-      const vx = center.x - clusterCenter.x;
-      const vy = center.y - clusterCenter.y;
-      const mag = Math.hypot(vx, vy);
-      if (mag < 1) return null;
+      let best = filtered[0];
+      let bestDist = Infinity;
 
-      let bestTip = null;
-      let bestProj = -Infinity;
-
-      for (const p of cluster) {
-        const proj = ((p.x - clusterCenter.x) * vx / mag) + ((p.y - clusterCenter.y) * vy / mag);
-        if (proj > bestProj) {
-          bestProj = proj;
-          bestTip = p;
+      for (const p of filtered) {
+        const d = Math.hypot(p.x - mx, p.y - my);
+        if (d < bestDist) {
+          bestDist = d;
+          best = p;
         }
       }
 
-      return bestTip;
+      return best;
+    }
+
+    function median(arr) {
+      const mid = Math.floor(arr.length / 2);
+      return arr.length % 2 === 0 ? (arr[mid - 1] + arr[mid]) / 2 : arr[mid];
+    }
+
+    function scalePointToMotion(p) {
+      return {
+        x: p.x * MOTION_SCALE,
+        y: p.y * MOTION_SCALE
+      };
+    }
+
+    function scalePointFromMotion(p) {
+      return {
+        x: p.x / MOTION_SCALE,
+        y: p.y / MOTION_SCALE
+      };
     }
 
     function getBoardCenter() {
@@ -731,13 +1076,15 @@
       ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
       ctx.stroke();
 
-      if (lastMotionCluster && lastMotionCluster.length) {
-        ctx.fillStyle = 'rgba(0, 210, 255, 0.35)';
-        for (const p of lastMotionCluster) {
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
-          ctx.fill();
-        }
+      if (liveROI) {
+        ctx.strokeStyle = waitingForBoardToSettle ? 'rgba(255,214,10,0.9)' : 'rgba(0,210,255,0.9)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(
+          liveROI.minX,
+          liveROI.minY,
+          Math.max(1, liveROI.maxX - liveROI.minX),
+          Math.max(1, liveROI.maxY - liveROI.minY)
+        );
       }
 
       for (const p of points) {
@@ -766,8 +1113,8 @@
         let sx = draggedPoint.x - srcSize / 2;
         let sy = draggedPoint.y - srcSize / 2;
 
-        sx = clamp(sx, 0, offscreenCanvas.width - srcSize);
-        sy = clamp(sy, 0, offscreenCanvas.height - srcSize);
+        sx = clamp(sx, 0, fullCanvas.width - srcSize);
+        sy = clamp(sy, 0, fullCanvas.height - srcSize);
 
         ctx.save();
         ctx.beginPath();
@@ -775,7 +1122,7 @@
         ctx.clip();
 
         ctx.drawImage(
-          offscreenCanvas,
+          fullCanvas,
           sx, sy, srcSize, srcSize,
           magX, magY, magSize, magSize
         );
@@ -796,14 +1143,40 @@
         ctx.restore();
       }
 
-      if (lastTip) {
-        ctx.fillStyle = '#00d2ff';
+      if (liveTip && !waitingForBoardToSettle) {
+        ctx.fillStyle = 'rgba(0,210,255,0.92)';
         ctx.beginPath();
-        ctx.arc(lastTip.x, lastTip.y, 10, 0, Math.PI * 2);
+        ctx.arc(liveTip.x, liveTip.y, 8, 0, Math.PI * 2);
         ctx.fill();
-
         ctx.strokeStyle = 'white';
         ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      if (waitingForBoardToSettle && liveTip) {
+        ctx.fillStyle = 'rgba(255,214,10,0.96)';
+        ctx.beginPath();
+        ctx.arc(liveTip.x, liveTip.y, 9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      if (lastTip) {
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(lastTip.x, lastTip.y, 12, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = 'rgba(0,210,255,0.95)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(lastTip.x - 18, lastTip.y);
+        ctx.lineTo(lastTip.x + 18, lastTip.y);
+        ctx.moveTo(lastTip.x, lastTip.y - 18);
+        ctx.lineTo(lastTip.x, lastTip.y + 18);
         ctx.stroke();
       }
 
